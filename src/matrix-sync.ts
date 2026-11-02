@@ -151,7 +151,7 @@ export class MatrixSyncRecovery {
   ): Promise<MatrixEvent[]> {
     const out: MatrixEvent[] = [];
     const ids = new Set<string>();
-    const filter = encodeURIComponent(JSON.stringify({ types: ["m.room.message", "m.reaction"] }));
+    const filter = encodeURIComponent(JSON.stringify({ types: ["m.room.message", "m.room.encrypted", "m.room.encryption", "m.room.member", "m.reaction"] }));
     let token: string | undefined = from;
     let complete = false;
     for (let n = 0; token && n < MAX_BACKFILL_PAGES && !aborted(); n++) {

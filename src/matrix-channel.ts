@@ -1,5 +1,5 @@
 /**
- * Matrix channel over the plain client-server API (no SDK, no E2EE yet).
+ * Matrix channel with native Rust SDK Olm/Megolm E2EE.
  * Configured through the same MATRIX_* environment as the Hermes Matrix adapter, so
  * existing AgentOS manifests (MatrixAgent secrets, params) keep working.
  */
@@ -12,6 +12,7 @@ import { marked } from "marked";
 import { writeFileDurable } from "./durable.js";
 import { type Address, type Channel, type DedupPins, type Inbound, PermanentDeliveryError, type SendMeta, type TurnEvent } from "./types.js";
 import { type MatrixEvent, MatrixSyncRecovery } from "./matrix-sync.js";
+import { MatrixCrypto } from "./matrix-crypto.js";
 
 export interface MatrixOptions {
   homeserver: string;
@@ -23,10 +24,15 @@ export interface MatrixOptions {
   userId?: string;
   password?: string;
   deviceId?: string;
+  /** Enabled by default. Disabled clients still refuse encrypted rooms. */
+  e2ee?: boolean;
+  cryptoStoreDir?: string;
   displayName?: string;
   allowedUsers: string[];
   allowAllUsers: boolean;
   allowedRooms: string[];
+  /** Strict room boundary, including invites, DMs and outbound traffic. Empty denies all. */
+  admissionRooms?: string[];
   freeRooms: string[];
   optionalReplyRooms: string[];
   requireMention: boolean;
@@ -50,6 +56,8 @@ const truthy = (v: string | undefined, dflt: boolean) => (v === undefined || v =
 export function matrixOptionsFromEnv(env: NodeJS.ProcessEnv, home: string): MatrixOptions | undefined {
   if (!env.MATRIX_HOMESERVER || !(env.MATRIX_ACCESS_TOKEN || (env.MATRIX_USER_ID && env.MATRIX_PASSWORD))) return undefined;
   const delay = env.MATRIX_TEXT_BATCH_DELAY_SECONDS ?? env.HERMES_MATRIX_TEXT_BATCH_DELAY_SECONDS;
+  const admissionRooms = env.MATRIX_ADMISSION_ROOMS === undefined ? undefined : csv(env.MATRIX_ADMISSION_ROOMS);
+  if (admissionRooms?.some(room => !/^![^\s/:]+:[^\s/]+$/.test(room))) throw Error("Invalid Matrix room admission ID");
   return {
     homeserver: env.MATRIX_HOMESERVER.replace(/\/+$/, ""),
     accessToken: env.MATRIX_ACCESS_TOKEN,
@@ -60,10 +68,13 @@ export function matrixOptionsFromEnv(env: NodeJS.ProcessEnv, home: string): Matr
     userId: env.MATRIX_USER_ID,
     password: env.MATRIX_PASSWORD,
     deviceId: env.MATRIX_DEVICE_ID,
+    e2ee: truthy(env.MATRIX_E2EE, true),
+    cryptoStoreDir: env.MATRIX_CRYPTO_STORE_DIR || path.join(home, "matrix-crypto"),
     displayName: env.MATRIX_DISPLAY_NAME,
     allowedUsers: csv(env.MATRIX_ALLOWED_USERS),
     allowAllUsers: truthy(env.MATRIX_ALLOW_ALL_USERS, false),
     allowedRooms: csv(env.MATRIX_ALLOWED_ROOMS),
+    admissionRooms,
     freeRooms: csv(env.MATRIX_FREE_RESPONSE_ROOMS),
     optionalReplyRooms: csv(env.MATRIX_OPTIONAL_REPLY_ROOMS),
     requireMention: truthy(env.MATRIX_REQUIRE_MENTION, true),
@@ -129,6 +140,45 @@ export class MatrixChannel implements Channel {
   private telemetry: Promise<void> = Promise.resolve();
   private telemetryPending = 0;
   userId = "";
+  private crypto?: MatrixCrypto;
+  /** Encryption is sticky: never trust a subsequent missing state event as downgrade. */
+  private readonly encryptedRooms = new Set<string>();
+  private readonly pendingEncrypted = new Map<string, { roomId: string; event: MatrixEvent }>();
+  private pendingWrite: Promise<void> = Promise.resolve();
+  private get pendingCryptoFile(): string { return path.join(this.o.cryptoStoreDir ?? path.join(path.dirname(this.o.syncStateFile), "matrix-crypto"), "pending-events.json"); }
+
+  private async persistPending(): Promise<void> {
+    const write = this.pendingWrite.catch(() => undefined).then(() => writeFileDurable(this.pendingCryptoFile, JSON.stringify({ homeserver: this.o.homeserver, userId: this.userId, deviceId: this.o.deviceId, events: [...this.pendingEncrypted.values()], encryptedRooms: [...this.encryptedRooms] })));
+    this.pendingWrite = write;
+    await write;
+  }
+
+  private async roomEncrypted(roomId: string): Promise<boolean> {
+    if (this.encryptedRooms.has(roomId)) return true;
+    try {
+      const state = await this.api("GET", `/rooms/${encodeURIComponent(roomId)}/state/m.room.encryption`);
+      if (state.algorithm !== "m.megolm.v1.aes-sha2") throw Error("Unsupported Matrix room encryption algorithm");
+      this.encryptedRooms.add(roomId);
+      if (this.crypto) await this.persistPending();
+      return true;
+    } catch (err) {
+      if (err instanceof HttpError && err.status === 404) return false;
+      throw err;
+    }
+  }
+
+  private async retryEncrypted(): Promise<void> {
+    if (!this.crypto) return;
+    for (const [key, { roomId, event }] of this.pendingEncrypted) {
+      let plain: MatrixEvent;
+      try { plain = await this.crypto.decrypt(roomId, event); }
+      catch { continue; } // keep ciphertext durably until a later key/device update
+      await this.onEvent(roomId, plain, true);
+      if (!(await this.recovery.settle())) throw Error("decrypted input not accepted");
+      this.pendingEncrypted.delete(key);
+      await this.persistPending();
+    }
+  }
 
   private enqueueTelemetry(work: () => Promise<void>): void {
     if (this.telemetryPending >= 50) return;
@@ -216,6 +266,8 @@ export class MatrixChannel implements Channel {
    * a rejected externally supplied MATRIX_ACCESS_TOKEN cannot be renewed and is reported.
    */
   private async api<T = any>(method: string, p: string, body?: unknown, longPollMs = 0): Promise<T> {
+    const room = /^\/rooms\/([^/?]+)/.exec(p);
+    if (room && !this.roomAdmitted(decodeURIComponent(room[1]!))) throw new PermanentDeliveryError("Matrix room admission denied");
     try {
       return await this.request<T>(method, p, body, longPollMs);
     } catch (err) {
@@ -269,6 +321,16 @@ export class MatrixChannel implements Channel {
       throw new Error(`configured Matrix user ${this.o.userId} does not match authenticated user ${authenticatedUserId}`);
     }
     this.userId = authenticatedUserId;
+    if (this.o.e2ee !== false) {
+      if (!this.o.deviceId) throw Error("Matrix E2EE requires the authenticated device_id; set MATRIX_DEVICE_ID for a device-bound token");
+      this.crypto = await MatrixCrypto.open(this.o.cryptoStoreDir ?? path.join(path.dirname(this.o.syncStateFile), "matrix-crypto"), this.o.homeserver, this.userId, this.o.deviceId, (m, p, b) => this.api(m, p, b));
+      try {
+        const pending = JSON.parse(await readFile(this.pendingCryptoFile, "utf8"));
+        if (pending.homeserver !== this.o.homeserver || pending.userId !== this.userId || pending.deviceId !== this.o.deviceId) throw Error("Matrix pending crypto identity mismatch");
+        for (const item of pending.events) if (this.roomAdmitted(item.roomId)) this.pendingEncrypted.set(JSON.stringify([item.roomId, item.event.event_id]), item);
+        for (const room of pending.encryptedRooms ?? []) this.encryptedRooms.add(room);
+      } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") { this.crypto.close(); this.crypto = undefined; throw err; } }
+    }
     this.recovery.owner = { homeserver: this.o.homeserver, userId: authenticatedUserId };
     const saved = await this.recovery.load();
     if (saved.found) {
@@ -278,6 +340,11 @@ export class MatrixChannel implements Channel {
     } else {
       // First start: skip message history, but accept pending invites.
       const r = await this.api("GET", `/sync?timeout=0&filter=${encodeURIComponent(JSON.stringify(SYNC_FILTER))}`);
+      await this.crypto?.sync(this.admittedSync(r));
+      for (const [roomId, room] of Object.entries<any>(r.rooms?.join ?? {})) {
+        if ([...(room.state?.events ?? []), ...(room.timeline?.events ?? [])].some(e => e.type === "m.room.encryption" || e.type === "m.room.encrypted")) this.encryptedRooms.add(roomId);
+      }
+      if (this.crypto) await this.persistPending();
       this.queueInvites(r.rooms?.invite);
       await this.processInvites();
       this.recovery.advance(r.next_batch);
@@ -299,6 +366,11 @@ export class MatrixChannel implements Channel {
     this.typingUsers.clear();
     const finish = async () => {
       await this.loop?.catch(() => undefined);
+      await this.telemetry;
+      await this.pendingWrite;
+      await this.crypto?.idle();
+      this.crypto?.close();
+      this.crypto = undefined;
       for (const [key, b] of this.batches) {
         clearTimeout(b.timer);
         this.batches.delete(key);
@@ -328,6 +400,8 @@ export class MatrixChannel implements Channel {
       const saved = await readFile(this.tokenFile, "utf8").then((raw) => JSON.parse(raw), () => undefined);
       // A saved token is only ever sent to the homeserver it was issued by.
       if (saved?.userId === this.o.userId && saved?.homeserver === this.o.homeserver && typeof saved?.accessToken === "string") {
+        if (this.o.deviceId && saved.deviceId && this.o.deviceId !== saved.deviceId) throw Error("Matrix saved session device_id mismatch");
+        this.o.deviceId ??= saved.deviceId;
         this.o.accessToken = saved.accessToken;
         try {
           return await this.whoami();
@@ -354,16 +428,23 @@ export class MatrixChannel implements Channel {
       password: this.o.password,
       // Stable device so restarts do not pile up login devices.
       device_id: this.o.deviceId ?? `PIHARNESS_${createHash("sha256").update(this.o.userId ?? "").digest("hex").slice(0, 10).toUpperCase()}`,
-      initial_device_display_name: "vanillacore-harness",
+      initial_device_display_name: "hayate-agent",
     });
+    if (this.o.deviceId && r.device_id !== this.o.deviceId) throw Error("Matrix login device_id mismatch");
+    this.o.deviceId = r.device_id;
     this.o.accessToken = r.access_token;
     await mkdir(path.dirname(this.tokenFile), { recursive: true });
     await writeFileDurable(this.tokenFile, JSON.stringify({ homeserver: this.o.homeserver, userId: this.o.userId, accessToken: r.access_token, deviceId: r.device_id }));
   }
 
   private async whoami(): Promise<string> {
-    const id = (await this.api("GET", "/account/whoami")).user_id;
+    const identity = await this.api("GET", "/account/whoami");
+    const id = identity.user_id;
     if (typeof id !== "string" || !id) throw new Error("Matrix /account/whoami returned no user_id");
+    if (identity.device_id) {
+      if (this.o.deviceId && this.o.deviceId !== identity.device_id) throw Error("Matrix authenticated device_id mismatch");
+      this.o.deviceId = identity.device_id;
+    }
     return id;
   }
 
@@ -393,8 +474,18 @@ export class MatrixChannel implements Channel {
     const since = this.recovery.since;
     const q = `timeout=${timeoutMs}&filter=${encodeURIComponent(JSON.stringify(SYNC_FILTER))}${since ? `&since=${encodeURIComponent(since)}` : ""}`;
     const r = await this.api("GET", `/sync?${q}`, undefined, timeoutMs);
+    await this.crypto?.sync(this.admittedSync(r));
+    await this.retryEncrypted();
     this.queueInvites(r.rooms?.invite);
     for (const [roomId, room] of Object.entries<any>(r.rooms?.join ?? {})) {
+      if (!this.roomAdmitted(roomId)) continue;
+      for (const state of [...(room.state?.events ?? []), ...(room.timeline?.events ?? [])]) {
+        if (state.type === "m.room.encryption") {
+          if (state.content?.algorithm !== "m.megolm.v1.aes-sha2") throw Error("Unsupported Matrix room encryption algorithm");
+          this.encryptedRooms.add(roomId);
+        }
+      }
+      if (this.crypto) await this.persistPending();
       const members = room.summary?.["m.joined_member_count"];
       if (typeof members === "number") this.memberCount.set(roomId, { n: members, at: Date.now() });
       const timeline: MatrixEvent[] = room.timeline?.events ?? [];
@@ -414,7 +505,7 @@ export class MatrixChannel implements Channel {
           // skipped after a few attempts so it cannot block the room forever.
           // Transient (network, timeout, 5xx, 429) retries forever with backoff. Anything else
           // is retried a few times, then parked in the dead-letter file (never silently lost).
-          const transient = err instanceof MatrixTransportError || (err instanceof HttpError && (err.status >= 500 || err.status === 429));
+          const transient = ev.type === "m.room.encrypted" || err instanceof MatrixTransportError || (err instanceof HttpError && (err.status >= 500 || err.status === 429));
           const n = this.recovery.failure(ev.event_id);
           this.log(`event ${ev.event_id} failed (${n}${transient ? "" : `/${MAX_EVENT_ATTEMPTS}`}): ${err instanceof Error ? err.message : err}`);
           if (transient || n < MAX_EVENT_ATTEMPTS) {
@@ -454,6 +545,15 @@ export class MatrixChannel implements Channel {
 
   // ---------------------------------------------------------------- inbound
 
+  private roomAdmitted(roomId: string): boolean {
+    return this.o.admissionRooms === undefined || this.o.admissionRooms.includes(roomId);
+  }
+
+  private admittedSync(response: any): any {
+    if (this.o.admissionRooms === undefined) return response;
+    return { ...response, rooms: { ...response.rooms, join: Object.fromEntries(Object.entries(response.rooms?.join ?? {}).filter(([room]) => this.roomAdmitted(room))) } };
+  }
+
   private allowed(user: string): boolean {
     return this.o.allowAllUsers || this.o.allowedUsers.includes(user);
   }
@@ -489,6 +589,7 @@ export class MatrixChannel implements Channel {
   }
 
   private async onInvite(roomId: string, room: any): Promise<void> {
+    if (!this.roomAdmitted(roomId)) return;
     const inviter = (room.invite_state?.events ?? []).find((e: any) => e.type === "m.room.member" && e.state_key === this.userId)?.sender;
     if (!inviter || !this.allowed(inviter)) return;
     await this.api("POST", `/rooms/${encodeURIComponent(roomId)}/join`, {});
@@ -521,8 +622,20 @@ export class MatrixChannel implements Channel {
     return out.replace(/^\s*[:,]\s*/, "").trim();
   }
 
-  private async onEvent(roomId: string, ev: MatrixEvent): Promise<void> {
+  private async onEvent(roomId: string, ev: MatrixEvent, decrypted = false): Promise<void> {
+    if (!this.roomAdmitted(roomId)) return;
     if (ev.sender === this.userId) return;
+    if (ev.type === "m.room.encrypted") {
+      if (!this.crypto) throw Error("Matrix E2EE is unavailable; refusing encrypted event");
+      this.encryptedRooms.add(roomId);
+      this.pendingEncrypted.set(JSON.stringify([roomId, ev.event_id]), { roomId, event: ev });
+      await this.persistPending();
+      await this.retryEncrypted();
+      return;
+    }
+    // Plain reactions remain Matrix-standard; plain text cannot inject prompts/commands
+    // into a room whose encryption is known (including rooms discovered after restart).
+    if (!decrypted && ev.type === "m.room.message" && await this.roomEncrypted(roomId)) return;
     if (ev.type === "m.reaction") return this.onReaction(roomId, ev);
     if (ev.type !== "m.room.message") return;
     const c = ev.content;
@@ -568,7 +681,7 @@ export class MatrixChannel implements Channel {
       replyTo: { channel: "matrix", target: roomId, thread },
       replyOptional: replyOptional || undefined,
     };
-    if (isCommand || this.o.batchDelayMs <= 0) return this.handOff(input);
+    if (decrypted || isCommand || this.o.batchDelayMs <= 0) return this.handOff(input);
     // Keyed before auto-threading: rapid top-level messages merge into the first one's thread.
     this.batch(`${roomId}|${explicitThread ?? ""}|${ev.sender}`, input);
   }
@@ -618,6 +731,17 @@ export class MatrixChannel implements Channel {
 
   // ---------------------------------------------------------------- outbound
 
+  private async sendRoom(roomId: string, type: string, txn: string, content: Record<string, any>): Promise<any> {
+    if (type === "m.room.message" && await this.roomEncrypted(roomId)) {
+      if (!this.crypto) throw Error("Matrix E2EE is unavailable; refusing plaintext downgrade");
+      const joined = await this.api("GET", `/rooms/${encodeURIComponent(roomId)}/joined_members`);
+      if (!joined.joined || typeof joined.joined !== "object" || !Object.hasOwn(joined.joined, this.userId)) throw Error("Matrix encrypted room membership unavailable");
+      content = await this.crypto.encrypt(roomId, type, content, Object.keys(joined.joined));
+      type = "m.room.encrypted";
+    }
+    return this.api("PUT", `/rooms/${encodeURIComponent(roomId)}/send/${type}/${txn}`, content);
+  }
+
   async send(to: Address, text: string, meta?: SendMeta): Promise<void> {
     if (meta?.progressId) {
       if (meta.presentation !== "progress") await this.telemetry;
@@ -634,7 +758,7 @@ export class MatrixChannel implements Channel {
     for (const [n, chunk] of parts.entries()) {
       const content = renderContent(chunk, meta);
       if (to.thread) content["m.relates_to"] = { rel_type: "m.thread", event_id: to.thread, is_falling_back: true, "m.in_reply_to": { event_id: to.thread } };
-      const r = await this.api("PUT", `/rooms/${encodeURIComponent(to.target)}/send/m.room.message/${encodeURIComponent(meta?.deliveryId ? `${meta.deliveryId}.${n}` : randomUUID())}`, content).catch((err) => {
+      const r = await this.sendRoom(to.target, "m.room.message", encodeURIComponent(meta?.deliveryId ? `${meta.deliveryId}.${n}` : randomUUID()), content).catch((err) => {
         // 4xx other than 429 (and 401: token may be renewed) cannot succeed by retrying.
         if (err instanceof HttpError && err.status >= 400 && err.status < 500 && err.status !== 429 && err.status !== 401) {
           throw new PermanentDeliveryError(err.message);
@@ -654,14 +778,14 @@ export class MatrixChannel implements Channel {
     const logical = createHash("sha256").update(JSON.stringify([to.target, to.thread, meta.progressId])).digest("hex");
     const relation = to.thread ? { "m.relates_to": { rel_type: "m.thread", event_id: to.thread, is_falling_back: true, "m.in_reply_to": { event_id: to.thread } } } : {};
     // Reusing this transaction resolves the native reference even after restart or a lost response.
-    const seed = await this.api("PUT", `/rooms/${encodeURIComponent(to.target)}/send/m.room.message/${logical}.seed`, {
+    const seed = await this.sendRoom(to.target, "m.room.message", `${logical}.seed`, {
       ...renderContent(meta.progressId?.startsWith("native:") ? text : "⏳ Wird bearbeitet …", { presentation: "progress" }), ...relation,
     });
     if (typeof seed.event_id !== "string") throw Error("Matrix progress reference missing");
     if (meta.presentation !== "progress") {
       try {
         const original = await this.api("GET", `/rooms/${encodeURIComponent(to.target)}/event/${encodeURIComponent(seed.event_id)}`);
-        if (original.unsigned?.redacted_because || (original.content && !original.content.msgtype)) {
+        if (original.unsigned?.redacted_because || (original.type !== "m.room.encrypted" && original.content && !original.content.msgtype)) {
           await this.send(to, text, { ...meta, progressId: undefined });
           return;
         }
@@ -678,7 +802,7 @@ export class MatrixChannel implements Channel {
     const parts = fitChunks(text || (meta.outcome === "cancelled" ? "⏹️ Abgebrochen." : meta.outcome === "failed" ? "❌ Fehlgeschlagen." : "✅ Bearbeitung abgeschlossen."), MAX_CHUNK, renderEdit);
     const txn = meta.deliveryId ?? randomUUID();
     try {
-      await this.api("PUT", `/rooms/${encodeURIComponent(to.target)}/send/m.room.message/${logical}.${encodeURIComponent(txn)}.edit`, renderEdit(parts[0]!));
+      await this.sendRoom(to.target, "m.room.message", `${logical}.${encodeURIComponent(txn)}.edit`, renderEdit(parts[0]!));
     } catch (err) {
       if (!(err instanceof HttpError && [403, 404].includes(err.status))) throw err;
       await this.send(to, text, { ...meta, progressId: undefined });
@@ -726,8 +850,8 @@ const SYNC_FILTER = {
   presence: { not_types: ["*"] },
   account_data: { not_types: ["*"] },
   room: {
-    timeline: { types: ["m.room.message", "m.reaction"], limit: 50 },
-    state: { lazy_load_members: true, types: ["m.room.member"] },
+    timeline: { types: ["m.room.message", "m.room.encrypted", "m.room.encryption", "m.room.member", "m.reaction"], limit: 50 },
+    state: { lazy_load_members: true, types: ["m.room.member", "m.room.encryption"] },
     ephemeral: { not_types: ["*"] },
     account_data: { not_types: ["*"] },
   },
