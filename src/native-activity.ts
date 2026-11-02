@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { writeFileDurable } from "./durable.js";
 import type { ActivityEvent } from "./activity.js";
 import type { Address } from "./types.js";
+import { labelOutput } from "./hashtags.js";
 
 /** Serialized, bounded latest-value delivery. No runtime payloads enter this adapter. */
 export class NativeActivityDelivery {
@@ -39,7 +40,7 @@ export class NativeActivityDelivery {
       : active.size ? `Werkzeug ${[...new Set(active.values())].join(", ")}: running`
       : `${s.phase} · ${s.activity}${event.kind === "alive" ? " · weiterhin aktiv (Host)" : ""}`;
     // One stable reference per turn: tool calls and host status replace each other.
-    this.queue(turn, to, `${prefix} · ${detail}`);
+    this.queue(turn, to, labelOutput(`${prefix} · ${detail}`, (s as typeof s & { outputTags?: string[] }).outputTags));
     if (tool?.state === "started") void this.flush().catch(() => undefined);
   }
   metadata(to: Address, id: string, state: string): void {
