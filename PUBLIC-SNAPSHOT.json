@@ -1,6 +1,6 @@
 {
-  "contentDigest": "1ff577b2f80007bbc6f35231e456e52cd2cd4b64b4a2979889344de032097110",
-  "coreSHA": "db32e3190274f243b470a69903859e96a07fe715",
+  "contentDigest": "fa8f662155e02af3cdbb229c12072a742d6a625b983fbdea370a9ae948a81749",
+  "coreSHA": "075e36e6b506496f4ce976bf710f2ca822da160d",
   "files": [
     {
       "mode": "100644",
@@ -70,7 +70,7 @@
     {
       "mode": "100644",
       "path": "src/dispatcher-plugin.ts",
-      "sha256": "210fc5f5f9e2b8e26378f0f7b0501396a5ded0f51b4da67b5a28f1a87934291a"
+      "sha256": "0274dc68506592f21f1d0cb18f6d45ac69834c796713effbc7aafde186c0187f"
     },
     {
       "mode": "100644",
@@ -259,6 +259,11 @@
     },
     {
       "mode": "100644",
+      "path": "test/dispatcher-diagnostic.test.mjs",
+      "sha256": "d3d06ba34db67d69a23292dd687c5bcd906d8d6301d7859a0c41478cf0d5c73d"
+    },
+    {
+      "mode": "100644",
       "path": "test/memory-plugin.test.mjs",
       "sha256": "e1dee704d4af3200591dc39fd778344378a9f73e524dc99e0be2505e65fc0ead"
     },
@@ -268,7 +273,10 @@
       "sha256": "2aeecd82dd8ef2d232ac12de999673d1ff441bf8599e6f8cf0568c735b22c397"
     }
   ],
-  "historyPolicy": "fresh snapshot; no private source ancestry or author metadata",
+  "historyPolicy": "sole public parent; no private source ancestry",
+  "publicBase": "966d102ad20e94c0a9f079d15ed6d8b62f655f9a",
+  "purpose": "Safe durable dispatcher status diagnostics, including legacy records",
   "schema": 1,
-  "sourceSHA": "d0d750d6c0f3e74ef664a609e660fc8155ea9eb6"
+  "sourceMain": "1b07370600a4d71d26a0b45ae5076cc29459b0cf",
+  "sourceSHA": "5eb2c228cfc22329091a4881a8a0b81f834d3741"
 }
