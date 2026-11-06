@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import type { AssessmentBackend } from "./assessment-backend.js";
 
 export interface ReviewExecutionRequest {
