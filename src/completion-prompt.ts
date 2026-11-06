@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 import type { Inbound } from "./types.js";
 import type { CompletionAuthorization } from "./completion-check.js";
 

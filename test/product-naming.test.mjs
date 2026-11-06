@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
-test('public plugin documentation names Hayate Agent without renaming the canonical source path', async () => {
+test('public plugin documentation explains usage and trust without private publication instructions', async () => {
   const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
-  assert.match(readme, /trusted Hayate Agent plugin adapters/);
-  assert.match(readme, /All Hayate Agent instances/);
-  assert.match(readme, /`harness\/core`/);
+  assert.match(readme, /Hayate Agent Plugins/);
+  assert.match(readme, /https:\/\/github\.com\/hayate-agent\/core/);
+  assert.match(readme, /trusted code with the agent process/);
+  assert.match(readme, /Core includes a tested set of plugins/);
+  assert.doesNotMatch(readme, /`harness\/core`|configured Forgejo agent identities/);
 });
 
 test('automatic memory capture attributes reported claims to Hayate Agent', async () => {
