@@ -1,11 +1,18 @@
 {
-  "contentDigest": "2875b40a13227f15054ac51549165686d6f18719bd628e756dbebb32c7945c49",
+  "contentDigest": "859f676a25be2e74cd274b761accfad125761ed650df8afe01eea4f8c3960652",
   "coreSHA": "075e36e6b506496f4ce976bf710f2ca822da160d",
+  "documentationMaintenance": {
+    "note": "Code sourceSHA is unchanged; LICENSE formatting restored from the already-approved canonical Apache text.",
+    "paths": [
+      "LICENSE"
+    ],
+    "sourceSHA": "d90f89f8931d66e04580ef1f607bb19cc60f78d0"
+  },
   "files": [
     {
       "mode": "100644",
       "path": "LICENSE",
-      "sha256": "bc0963cd8a60774899a442414e13820735505e44fa571df529356d5e27e17f8d"
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
     },
     {
       "mode": "100644",
