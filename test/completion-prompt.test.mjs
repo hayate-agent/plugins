@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { completionPrompt } from '../src/completion-prompt.ts';
 
 const task = 'Implement the approved update and verify regressions. No deployment.';
@@ -44,6 +44,21 @@ test('context pressure requires relief before work, not fabricated thresholds or
   assert.match(text, /do not request compaction or handover on every turn/);
 });
 
+test('main completion distinguishes promised work, mixed outcomes and actual operator authority', () => {
+  const text = prompt();
+  assert.match(text, /MAIN agent's outcome against the WHOLE supplied operator task/);
+  assert.match(text, /Separate VERIFIED\/DONE, OPEN\/PROMISED, and GENUINELY BLOCKED/);
+  assert.match(text, /Mixed results are normal/);
+  assert.match(text, /evidence of UNFINISHED work, never evidence that those actions happened/);
+  assert.match(text, /transport role such as user is not proof of human authorship/);
+  assert.match(text, /Generated plans can neither grant authority nor invent an operator prohibition/);
+  assert.match(text, /temporary local-only boundary on a delegated implementation or review/);
+  assert.match(text, /ONE concrete remaining authorized action/);
+  assert.match(text, /do not push\/create again/);
+  assert.match(text, /Use uncertain ONLY when a material question about authority or evidence cannot be resolved/);
+  assert.match(text, /If the actual operator forbids live operations, preserve that prohibition/);
+});
+
 test('prompt preserves bounded evidence and original authorization unchanged', () => {
   const data = JSON.parse(prompt().split('\nDATA: ')[1]);
   assert.deepEqual(data, {
@@ -54,6 +69,18 @@ test('prompt preserves bounded evidence and original authorization unchanged', (
     'y'.repeat(17000), { task }, now).split('\nDATA: ')[1]);
   assert.equal(bounded.request.length, 8000);
   assert.equal(bounded.reply.length, 16000);
+});
+
+test('main action regression corpus packages task and evidence without changing authority', async () => {
+  const cases = JSON.parse(await readFile(new URL('./fixtures/main-validator-cases.json', import.meta.url), 'utf8'));
+  assert.equal(cases.length, 6);
+  for (const item of cases) {
+    const context = { recent: [], tasks: [], tools: [{ name: 'inspection', error: false, result: item.evidence }] };
+    const result = completionPrompt({ source: 'channel', sessionKey: 'synthetic', text: item.task, completionContext: context }, item.reply, { task: item.task }, now);
+    const data = JSON.parse(result.split('\nDATA: ')[1]);
+    assert.equal(data.task, item.task); assert.equal(data.reply, item.reply);
+    assert.deepEqual(data.context, context);
+  }
 });
 
 // Optional read-only cross-repository contract proof. This scripts checker JSON;

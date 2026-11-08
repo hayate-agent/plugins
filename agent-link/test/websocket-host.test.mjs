@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { setup } from './fixture.mjs';
+import { AgentRelay } from '../websocket-relay.mjs';
+
+test('actual Core outbound plugin routes one host turn without inbound target listener and retains update ownership', { skip: !process.env.HARNESS_CORE_ROOT }, async t => {
+  const root = path.resolve(process.env.HARNESS_CORE_ROOT); const load = file => import(pathToFileURL(path.join(root, file)).href);
+  const { Harness } = await load('src/harness.ts'), { PluginHost } = await load('src/plugins.ts'), { FakeRuntime } = await load('test/fakes.ts'), { ExecutionContexts } = await load('src/execution-contexts.ts');
+  const f = await setup(t); await f.server.stop(); await f.workspace.stop();
+  const relay = new AgentRelay({ home: f.centralHome, origin: f.origin, port: f.config.port, host: '127.0.0.1', tls: { key: await readFile(f.config.keyFile), cert: await readFile(f.config.certFile) } }); await relay.open(); f.central.registerAdapter('hayate-wss', relay.adapter);
+  const runtime = new FakeRuntime(), host = new PluginHost();
+  const harness = new Harness({ runtime, tickMs: 60000, updateBlockers: () => host.updateBlockers() });
+  const contexts = new ExecutionContexts(path.join(f.targetHome, 'contexts.json'), f.targetHome); await contexts.load();
+  await writeFile(path.join(f.targetHome, 'agent-link-outbound.json'), JSON.stringify({ capabilities: ['streams', 'messages', 'activity'], projects: { explicit: f.project.id }, relays: [{ origin: f.origin, caFile: f.config.certFile }] }));
+  const files = ['credentials/index.mjs', 'workspace/index.mjs', 'agent-link/outbound.mjs'].map(file => fileURLToPath(new URL('../../' + file, import.meta.url)));
+  await host.load(files, { home: f.targetHome, cwd: f.targetHome, agent: 'Actual outbound Core', executionContexts: { get: key => contexts.get(key), bind: (key, value) => harness.withForegroundWork(() => contexts.bind(key, value)) }, foregroundWork: work => harness.withForegroundWork(work) }, []);
+  for (const channel of host.channels.values()) harness.addChannel(channel); await harness.start();
+  t.after(async () => { await harness.stop(); await host.stop(); await relay.stop(); });
+  const client = host.services.get('agent-link-outbound').implementation;
+  const invite = await relay.invite('operator', { name: 'Actual outbound', capabilities: ['streams', 'messages', 'activity'] });
+  const connection = await client.enroll(f.origin, invite.code);
+  for (let i = 0; i < 100 && !relay.list('operator')[0]?.connected; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  const agent = await relay.accept('operator', connection.id, f.central);
+  const stream = await f.central.request('operator', agent.id, 'streams', { action: 'create', projectId: f.project.id, title: 'Actual outbound host', idempotencyKey: randomUUID() });
+  const input = { action: 'send', streamId: stream.id, id: randomUUID(), text: 'Run through outbound WSS' };
+  await f.central.request('operator', agent.id, 'messages', input); await harness.drained();
+  await f.central.request('operator', agent.id, 'messages', input); await harness.drained();
+  assert.equal(runtime.sessions.get(`plugin:workspaces:${stream.id}`).prompts.length, 1);
+  assert.equal(contexts.get(`plugin:workspaces:${stream.id}`).cwd, f.targetHome);
+  const result = await f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id });
+  assert.equal(result.messages.filter(message => message.role === 'assistant').length, 1);
+  const lease = harness.acquireUpdateAdmission(1000); assert.equal(lease.status, 'admitted', 'Idle WSS socket must not block update admission');
+});
