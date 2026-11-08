@@ -1,6 +1,6 @@
 {
-  "contentDigest": "33d8531f212202c356f140521b7fc704066e53987497a492ab911ed0b6a35d52",
-  "coreSHA": "ee5694d7c29575900d3d31ace159574ecfe575bc",
+  "contentDigest": "bbe14a13d635e9929765ccbef7fc0072bf30e7d3d441f30cd155e4ebd20e9e34",
+  "coreSHA": "175e9a615676813b2918318be09cbcc1a8f49c12",
   "files": [
     {
       "mode": "100644",
@@ -15,7 +15,7 @@
     {
       "mode": "100644",
       "path": "README.md",
-      "sha256": "1fa95578a153d79f1b630a049e38d84df38020fe57b9e491b981745df9335782"
+      "sha256": "aa2e999a887a05fa1bd54b1d1f1ed61972492b0aab97c278741461979aac87af"
     },
     {
       "mode": "100644",
@@ -725,5 +725,5 @@
   ],
   "historyPolicy": "fresh snapshot; no private source ancestry or author metadata",
   "schema": 1,
-  "sourceSHA": "2880e1449d02602784c874455dea1904ef6ab9e7"
+  "sourceSHA": "ee3bc45f3d6cfc73211e71abce5aee34e048ee6b"
 }

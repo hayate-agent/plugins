@@ -86,6 +86,14 @@ provider credentials, agent identities or deployment-specific configuration.
 - [WebUI](https://github.com/hayate-agent/webui) — independent browser dashboard; consumes the backend API
 - [Deployments](https://github.com/hayate-agent/deployments) — deployment examples
 
+## Public snapshot updates
+
+The public repository receives reviewed source snapshots through publishing pull
+requests. Changed exports are tested against the public Core before integration;
+unchanged snapshots do not require another release. The independent
+[WebUI frontend](https://github.com/hayate-agent/webui) remains in its own
+repository, while the dashboard API and agent services are maintained here.
+
 ## License
 
 [Apache-2.0](LICENSE). This covers the plugin source and backend packages;
