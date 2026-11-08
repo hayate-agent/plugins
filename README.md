@@ -4,9 +4,26 @@ Plugin adapters for [Hayate Agent](https://github.com/hayate-agent/core): comman
 channels, task delegation, context management and integrations for a persistent
 AI assistant.
 
+Optional standalone gateway: [Slack Socket Mode installation](docs/slack-gateway.md)
+([app manifest](examples/slack-app-manifest.json)). This local ESM module is
+installed explicitly, not fetched or enabled automatically by Core.
+
 **To use Hayate, start with [Core's installation guide](https://github.com/hayate-agent/core#readme).**
 Core includes a tested set of plugins. You do not need to install this repository
 separately for a normal installation.
+
+## Headless workspace and agent overlay (development)
+
+[Workspace architecture and setup](docs/workspace-architecture.md) describes the
+independent `workspace/`, `credentials/`, `git-catalog/`, `identity/` and `agent-hub/` packages.
+They own backend state and integrations; the optional WebUI consumes their services.
+External agent runtimes are future adapters, not dependencies of the frontend.
+This overlay is installed and updated separately from Core. It checks required
+host capabilities and service versions; Core need not pin its exact revision or
+bundle it.
+[Explicit authenticated HTTPS](docs/authenticated-webui.md) protects the API;
+[Hayate-to-Hayate HTTPS connectivity](docs/agent-link.md) is implemented as an
+optional headless adapter/endpoint; external runtimes remain future adapters.
 
 ## Included adapters
 
@@ -14,6 +31,9 @@ separately for a normal installation.
 - **Context and sessions:** compaction, handover, continuation and session observation.
 - **Ongoing work:** loops, cron reports and nightly task strategies.
 - **Gateways:** channel registration, routing and activity reporting.
+- **[Dashboard API](dashboard-api/README.md):** authenticated HTTP/SSE access to
+  conversations and backend services. Contains no browser assets or frontend build.
+  The [WebUI](https://github.com/hayate-agent/webui) is a separate project.
 - **Review and improvement:** review commands and experiment evaluation adapters.
 - **Tools and memory:** memory commands, reloadable tools and optional Wasm tools.
 
@@ -22,7 +42,8 @@ underlying runtime, persistence, scheduling and policy enforcement.
 
 ## How plugins are used
 
-Core pins a plugin revision and file hashes in `plugins.lock.json`, then
+For its existing bundled TypeScript adapters (not the optional overlay), Core
+pins a plugin revision and file hashes in `plugins.lock.json`, then
 materializes those sources at build time. Published Core checkouts include their
 matching sources for offline materialization. Plugin code is not downloaded on
 each agent turn.
@@ -50,11 +71,22 @@ and matching development lock, as described in its
 Submit focused pull requests with tests for changed behavior. Never commit
 provider credentials, agent identities or deployment-specific configuration.
 
+## Which repository should I use?
+
+| Goal | Project |
+| --- | --- |
+| Run the agent or use its terminal interface | [Core](https://github.com/hayate-agent/core) |
+| Add integrations or backend services | This repository |
+| Use the browser dashboard | [WebUI](https://github.com/hayate-agent/webui) |
+| Start from deployment examples | [Deployments](https://github.com/hayate-agent/deployments) |
+
 ## Related projects
 
 - [Core](https://github.com/hayate-agent/core) — runtime, terminal interface and documentation
+- [WebUI](https://github.com/hayate-agent/webui) — independent browser dashboard; consumes the backend API
 - [Deployments](https://github.com/hayate-agent/deployments) — deployment examples
 
 ## License
 
-[Apache-2.0](LICENSE).
+[Apache-2.0](LICENSE). This covers the plugin source and backend packages;
+Core, WebUI and deployment examples publish their own license files.

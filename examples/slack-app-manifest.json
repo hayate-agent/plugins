@@ -1,0 +1,26 @@
+{
+  "display_information": {
+    "name": "Hayate Agent",
+    "description": "Hayate direct messages, channel threads and inbound files",
+    "background_color": "#263238"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Hayate Agent",
+      "always_online": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": ["app_mentions:read", "chat:write", "files:read", "im:history", "channels:history", "groups:history"]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": ["app_mention", "message.im", "message.channels", "message.groups"]
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}

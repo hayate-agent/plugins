@@ -1,0 +1,13 @@
+{
+  "name": "@hayate-agent/agent-link",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "build": "node scripts/build-websocket.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": { "ws": "8.22.1" },
+  "devDependencies": { "esbuild": "0.28.2" }
+}

@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { AgentHub } from '../service.mjs';
+import { LocalVault } from '../../credentials/vault.mjs';
+test('confirmed target revocation survives local cleanup failure and retries without using a deleted token', async t => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'revoke-cleanup-')); const vault = new LocalVault(home); await vault.open();
+  const hub = new AgentHub({ home, credentials: vault }); await hub.open(); let revoked = 0;
+  t.after(async () => { await hub.stop(); await vault.stop(); await rm(home, { recursive: true, force: true }); });
+  hub.registerAdapter('fixture', { async pair() { return { agent: 'Target', token: 'token', capabilities: ['messages'] }; }, async request() {}, async revoke() { revoked++; } });
+  const agent = await hub.connect('operator', { adapter: 'fixture', endpoint: 'fixture://target', code: 'one-use', name: 'Target' });
+  const remove = vault.remove.bind(vault); let calls = 0;
+  vault.remove = async (...args) => { if (++calls === 1) throw Error('Local disk unavailable'); return remove(...args); };
+  await assert.rejects(hub.remove('operator', agent.id), /disk unavailable/);
+  assert.equal(hub.list('operator')[0].authorizationRevoked, true);
+  await assert.rejects(hub.request('operator', agent.id, 'messages', { action: 'send' }), /revoked/);
+  await hub.remove('operator', agent.id);
+  assert.equal(revoked, 1); assert.equal(hub.list('operator').length, 0); assert.equal(vault.list('operator').length, 0);
+});

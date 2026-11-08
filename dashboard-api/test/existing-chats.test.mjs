@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { Workspace } from '../../workspace/service.mjs';
+import { WebUIChannel } from '../index.mjs';
+
+test('existing chats appear in projects and keep original host session key, transcript and retry identity', async t => {
+  const home = await mkdtemp(path.join(os.tmpdir(), 'existing-chats-')); const id = randomUUID();
+  await mkdir(path.join(home, 'webui'));
+  await writeFile(path.join(home, 'webui/conversations.json'), JSON.stringify({ version: 1, chats: [{ id, title: 'Retained conversation', updatedAt: 1, messages: [{ id: randomUUID(), role: 'user', text: 'Old request' }, { id: randomUUID(), role: 'assistant', text: 'Old answer' }] }] }));
+  const bindings = new Map();
+  const workspace = new Workspace({ home, cwd: home, executionContexts: { get: () => ({ cwd: home, directories: [home] }), async bind(key, value) { bindings.set(key, value); } } }); await workspace.open();
+  const services = { get: name => name === 'workspaces' ? { version: 1, implementation: workspace } : undefined };
+  const channel = new WebUIChannel({ home, port: 0, services }); const received = [];
+  await workspace.channel.start(async () => assert.fail('A retained chat must not create a new host workspace session'));
+  await channel.start(async input => { received.push(input); await channel.send({ target: id }, 'Continued answer', { deliveryId: input.id }); await channel.turnStatus({ target: id }, { id: input.id }, 'completed'); });
+  t.after(async () => { await channel.stop(); await workspace.stop(); await rm(home, { recursive: true, force: true }); });
+  const stream = workspace.snapshot('operator').streams[0]; assert.equal(stream.legacy.conversationId, id);
+  assert.deepEqual(workspace.stream('operator', stream.id).messages.map(m => m.text), ['Old request', 'Old answer']);
+  const project = await workspace.convert('operator', stream.id); assert.equal(project.cwd, home);
+  const message = { id: randomUUID(), text: 'Continue old work' }; await workspace.submit('operator', stream.id, message);
+  assert.equal(received[0].sessionKey, `webui:${id}`); assert.equal(received[0].id, `webui:${id}:${message.id}`);
+  assert.equal(bindings.get(`webui:${id}`).cwd, home);
+  const conversation = workspace.stream('operator', stream.id); assert.equal(conversation.messages.at(-1).text, 'Continued answer'); assert.equal(conversation.unread, true);
+  await channel.stop(); await channel.start(async () => {});
+  assert.equal(workspace.snapshot('operator').streams.length, 1, 'Restart attachment is idempotent');
+  assert.equal(workspace.stream('operator', stream.id).messages.length, 4);
+});
