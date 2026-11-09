@@ -10,13 +10,13 @@ import { CAPABILITIES } from '../workspace-protocol.mjs';
 import { WebSocket } from '../vendor/websocket.mjs';
 
 async function wait(fn, timeout = 5000) { const until = Date.now() + timeout; while (!fn()) { if (Date.now() > until) throw Error('Condition did not become true'); await new Promise(resolve => setTimeout(resolve, 15)); } }
-async function fixture(t, options = {}) {
+async function fixture(t, options = {}, clientOptions = {}) {
   const f = await setup(t); await f.server.stop(); // The target has NO listening HTTPS endpoint.
   const tls = { key: await readFile(f.config.keyFile), cert: await readFile(f.config.certFile) };
   let relay = new AgentRelay({ home: f.centralHome, origin: f.origin, host: '127.0.0.1', port: f.config.port, tls, heartbeatMs: 100, ...options }); await relay.open();
   f.central.registerAdapter('hayate-wss', { pair: args => relay.adapter.pair(args), request: args => relay.adapter.request(args), revoke: args => relay.adapter.revoke(args) });
   const client = new OutboundAgentLink({ home: f.targetHome, agent: 'Outbound target', workspace: f.workspace, credentials: f.targetVault,
-    config: { projects: { 'central-project': f.project.id }, capabilities: CAPABILITIES, relays: [{ origin: f.origin, caFile: f.config.certFile }] }, reconnectMinMs: 50, reconnectMaxMs: 100 }); await client.open();
+    config: { projects: { 'central-project': f.project.id }, capabilities: CAPABILITIES, relays: [{ origin: f.origin, caFile: f.config.certFile }] }, reconnectMinMs: 50, reconnectMaxMs: 100, ...clientOptions }); await client.open();
   t.after(async () => { await client.stop(); await relay.stop(); });
   return { ...f, tlsCert: tls.cert, client, get relay() { return relay; }, async restartRelay() { await relay.stop(); relay = new AgentRelay({ home: f.centralHome, origin: f.origin, host: '127.0.0.1', port: f.config.port, tls, heartbeatMs: 100, ...options }); await relay.open(); return relay; } };
 }
@@ -117,4 +117,24 @@ test('stop drains entered target work rather than releasing ownership on socket 
   await active; let stopped = false; const stop = f.client.stop().then(() => { stopped = true; });
   await new Promise(resolve => setTimeout(resolve, 50)); assert.equal(stopped, false);
   release(); await stop; await rejected; assert.equal(stopped, true);
+});
+
+
+test('missing server heartbeats destroy a silent channel without revoking or replaying work', async t => {
+  const f = await fixture(t, { heartbeatMs: 10000 }, { heartbeatTimeoutMs: 200 });
+  await register(f);
+  let reconnects = 0; const original = f.targetVault.withSecret.bind(f.targetVault);
+  f.targetVault.withSecret = (...args) => { reconnects++; return original(...args); };
+  await wait(() => reconnects > 0);
+  assert.notEqual(f.client.status().revoked, true);
+  assert.equal(f.workspace.snapshot('operator').streams.length, 0);
+});
+
+test('regular server pings keep idle channels live without productive ownership', async t => {
+  const f = await fixture(t, { heartbeatMs: 50 }, { heartbeatTimeoutMs: 300 });
+  await register(f);
+  await new Promise(resolve => setTimeout(resolve, 750));
+  assert.equal(f.client.status().connected, true);
+  assert.equal(f.relay.list('operator')[0].connected, true);
+  assert.equal(f.client.status().activeRequests, 0);
 });

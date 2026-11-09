@@ -8,10 +8,12 @@ const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{1
 
 /** Agent-originated connection. Reconnects the channel, never productive requests. */
 export class OutboundAgentLink {
-  #socket; #timer; #closing = false; #work = new Set(); #active = new Set(); #seen = new Set(); #stop; #delay; #connecting; #blocked = false; #enrolling = false;
-  constructor({ home, agent, workspace, credentials, config, foregroundWork = work => work(), reconnectMinMs = 500, reconnectMaxMs = 30000 }) {
+  #socket; #timer; #closing = false; #work = new Set(); #active = new Set(); #seen = new Set(); #stop; #delay; #connecting; #heartbeat; #blocked = false; #enrolling = false;
+  constructor({ home, agent, workspace, credentials, config, foregroundWork = work => work(), reconnectMinMs = 500, reconnectMaxMs = 30000, heartbeatTimeoutMs = 90000 }) {
     if (typeof agent !== 'string' || !agent || !workspace || !credentials?.withSecret || !Array.isArray(config?.capabilities) || config.capabilities.some(c => !CAPABILITIES.includes(c)) || !config.projects || typeof config.projects !== 'object' || Array.isArray(config.projects) || Object.values(config.projects).some(v => typeof v !== 'string')) throw Error('Explicit outbound agent identity, services and local capability/project policy required');
     if (!Number.isSafeInteger(reconnectMinMs) || reconnectMinMs < 25 || !Number.isSafeInteger(reconnectMaxMs) || reconnectMaxMs < reconnectMinMs || reconnectMaxMs > 60000) throw Error('Invalid reconnect limits');
+    if (!Number.isSafeInteger(heartbeatTimeoutMs) || heartbeatTimeoutMs < 100 || heartbeatTimeoutMs > 180000) throw Error('Invalid heartbeat deadline');
+    this.heartbeatTimeoutMs = heartbeatTimeoutMs;
     this.agent = agent; this.workspace = workspace; this.credentials = credentials; this.config = config; this.foregroundWork = foregroundWork;
     this.minDelay = reconnectMinMs; this.maxDelay = reconnectMaxMs; this.#delay = reconnectMinMs;
     this.store = new Store(path.join(home, 'agent-link-outbound/state.json'), { version: 1, connection: null });
@@ -76,10 +78,19 @@ export class OutboundAgentLink {
           maxPayload: 262144, perMessageDeflate: false, followRedirects: false,
         });
         this.#socket = socket;
-        socket.on('open', () => { if (this.#closing || this.#socket !== socket) { socket.terminate(); return; } this.#delay = this.minDelay; this.#seen.clear(); });
+        const heartbeat = () => {
+          if (this.#socket !== socket || this.#closing) return;
+          clearTimeout(this.#heartbeat);
+          this.#heartbeat = setTimeout(() => { if (this.#socket === socket) socket.terminate(); }, this.heartbeatTimeoutMs);
+          this.#heartbeat.unref?.();
+        };
+        socket.on('open', () => { if (this.#closing || this.#socket !== socket) { socket.terminate(); return; } this.#delay = this.minDelay; this.#seen.clear(); heartbeat(); });
+        // Server pings are required liveness evidence. TCP can remain half-open
+        // after a NAT/proxy failure; reconnect the channel, never replay work.
+        socket.on('ping', heartbeat);
         socket.on('error', () => {});
         socket.on('unexpected-response', (_request, response) => { response.resume(); if ([401, 403].includes(response.statusCode)) this.#invalidate(connection.id); socket.terminate(); });
-        socket.on('close', code => { if (this.#socket !== socket) return; this.#socket = undefined; if (code === 4003) this.#invalidate(connection.id); this.#schedule(); });
+        socket.on('close', code => { if (this.#socket !== socket) return; clearTimeout(this.#heartbeat); this.#socket = undefined; if (code === 4003) this.#invalidate(connection.id); this.#schedule(); });
         socket.on('message', (bytes, binary) => {
           if (this.#closing || this.#blocked || this.#socket !== socket || binary || this.#active.size >= 16) { socket.close(1008, 'Unavailable'); return; }
           let frame;
@@ -109,7 +120,7 @@ export class OutboundAgentLink {
     void this.#owned(() => this.store.change(data => { if (data.connection?.id === id) data.connection.revoked = true; })).catch(() => {});
   }
   stop() { return this.#stop ??= (async () => {
-    this.#closing = true; clearTimeout(this.#timer);
+    this.#closing = true; clearTimeout(this.#timer); clearTimeout(this.#heartbeat);
     const socket = this.#socket;
     const closed = socket && socket.readyState !== 3 ? new Promise(resolve => socket.once('close', resolve)) : Promise.resolve();
     socket?.terminate();

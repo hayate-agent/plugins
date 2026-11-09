@@ -1,5 +1,5 @@
 {
-  "contentDigest": "bbe14a13d635e9929765ccbef7fc0072bf30e7d3d441f30cd155e4ebd20e9e34",
+  "contentDigest": "4c1cf5a0a50ec46b9d680451edd5d6d059f2a5d67ed98993d478a55035e80ea1",
   "coreSHA": "175e9a615676813b2918318be09cbcc1a8f49c12",
   "files": [
     {
@@ -115,7 +115,7 @@
     {
       "mode": "100644",
       "path": "agent-link/test/websocket.test.mjs",
-      "sha256": "672b9d987bac8f0877e393b8bfc112d59e35f39cb2b56d279fd597f4aa25bb98"
+      "sha256": "ab86b45a1e3b5c2ce4d76b5df542c4b073a3562610a1366d41cffcc2ac44d36d"
     },
     {
       "mode": "100644",
@@ -125,7 +125,7 @@
     {
       "mode": "100644",
       "path": "agent-link/websocket-client.mjs",
-      "sha256": "2c3b0a180a46906d488cb0332fce6cf2ff47e04f93c5580b29d446d04d63bc02"
+      "sha256": "1e7205a448ca17c0b728e0c55a8cedd08211c785390f11fb41c096f979997d66"
     },
     {
       "mode": "100644",
@@ -725,5 +725,5 @@
   ],
   "historyPolicy": "fresh snapshot; no private source ancestry or author metadata",
   "schema": 1,
-  "sourceSHA": "ee3bc45f3d6cfc73211e71abce5aee34e048ee6b"
+  "sourceSHA": "4dafd798bb7fab5438ba4dc1e327bf83f2e3a0a8"
 }
