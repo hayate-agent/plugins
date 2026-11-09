@@ -1,6 +1,6 @@
 {
-  "contentDigest": "4c1cf5a0a50ec46b9d680451edd5d6d059f2a5d67ed98993d478a55035e80ea1",
-  "coreSHA": "175e9a615676813b2918318be09cbcc1a8f49c12",
+  "contentDigest": "b840fca84e93b1995d7183b3186c7b9c8e282b33192303ab492aa63832871c6f",
+  "coreSHA": "114b349d8055722f19348c83e9af549fe0fc4592",
   "files": [
     {
       "mode": "100644",
@@ -430,7 +430,7 @@
     {
       "mode": "100644",
       "path": "src/improvement-report.ts",
-      "sha256": "2e206939ef70e86df87059a5ab5584b203dec1decf289e437642e163d630b273"
+      "sha256": "f6205fdb56737b00493068d6d4e50c2f16ff116632ff0a1d1f23770fbe6f444f"
     },
     {
       "mode": "100644",
@@ -490,7 +490,7 @@
     {
       "mode": "100644",
       "path": "src/nightly-default.ts",
-      "sha256": "d807ad49e01dcb867f97fc748362e73e877c3540892755538eb2cc1840da2736"
+      "sha256": "252448cc97975a83512f7248bdddf1a1476e2869babb0906cb49522855f3fe46"
     },
     {
       "mode": "100644",
@@ -725,5 +725,5 @@
   ],
   "historyPolicy": "fresh snapshot; no private source ancestry or author metadata",
   "schema": 1,
-  "sourceSHA": "4dafd798bb7fab5438ba4dc1e327bf83f2e3a0a8"
+  "sourceSHA": "d6de8c839aeed713c49125552c06b931d4e922f0"
 }
