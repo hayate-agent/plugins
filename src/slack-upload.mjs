@@ -20,14 +20,17 @@ export class SlackUploader {
       try { await dir.sync(); } finally { await dir.close(); }
     } finally { await handle?.close(); await rm(temp, { force: true }); }
   }
-  async send({ sessionKey, to, reference, deliveryId }) {
+  async send({ sessionKey, to, reference, deliveryId, caption = '', scopedSend = false }) {
     if (!deliveryId || typeof deliveryId !== 'string' || !sessionKey || reference.sessionKey !== sessionKey ||
       !/^[a-f0-9]{64}$/.test(reference.sha256) || !Number.isSafeInteger(reference.size) ||
       reference.size < 0 || reference.size > this.maxBytes || typeof reference.name !== 'string' ||
-      !/^slack:T[A-Z0-9]+:[CG][A-Z0-9]+:\d+\.\d+$/.test(sessionKey) ||
-      to.channel !== 'slack' || sessionKey.split(':')[2] !== to.target || sessionKey.split(':')[3] !== to.thread) {
+      typeof sessionKey !== 'string' || sessionKey.length > 2000 || typeof caption !== 'string' || caption.length > 39000 ||
+      to.channel !== 'slack' || !/^[CGD][A-Z0-9]+$/.test(to.target ?? '') ||
+      (to.thread !== undefined && !/^\d+\.\d+$/.test(to.thread))) {
       throw Error('Invalid scoped Slack upload');
     }
+    if (!scopedSend && (sessionKey.split(':')[2] !== to.target ||
+        (sessionKey.split(':')[3] !== (to.thread ?? 'dm') && sessionKey.split(':')[3] !== 'channel'))) throw Error('Invalid scoped Slack upload');
     const owner = createHash('sha256').update(sessionKey).digest('hex');
     const fingerprint = createHash('sha256').update(JSON.stringify([sessionKey, deliveryId])).digest('hex');
     if (this.active.has(fingerprint)) throw Error('Slack upload already in progress');
@@ -56,16 +59,20 @@ export class SlackUploader {
       try { state = JSON.parse(await readFile(ledger, 'utf8')); }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
       if (state && state.identity !== identity) throw Error('Upload delivery ID reused with different content');
+      const destination = createHash('sha256').update(JSON.stringify([to.target, to.thread ?? null, caption])).digest('hex');
+      if (state?.destination !== undefined && state.destination !== destination) throw Error('Upload delivery ID reused with different destination or caption');
+      if (state && state.destination === undefined && (sessionKey.split(':')[2] !== to.target || sessionKey.split(':')[3] !== to.thread || caption))
+        throw Error('Legacy upload destination mismatch');
       if (state?.stage === 'complete') return { fileId: state.fileId };
       if (state && state.stage !== 'allocated') throw Error('Slack upload outcome uncertain; reconcile existing file before retry');
       if (!state) {
-        state = { identity, stage: 'allocating' };
+        state = { identity, destination, stage: 'allocating' };
         await this.save(ledger, state);
         const allocation = await this.api('files.getUploadURLExternal', { filename: path.basename(reference.name).slice(0, 255), length: bytes.length });
         const url = new URL(allocation.upload_url);
         if (url.protocol !== 'https:' || url.hostname !== 'files.slack.com' || url.port || url.username || url.password ||
           !/^F[A-Z0-9]+$/.test(allocation.file_id)) throw Error('Invalid Slack upload allocation');
-        state = { identity, stage: 'allocated', fileId: allocation.file_id, url: url.toString() };
+        state = { identity, destination, stage: 'allocated', fileId: allocation.file_id, url: url.toString() };
         await this.save(ledger, state);
       }
       // The signed URL is a credential: private ledger only, no token/header forwarding.
@@ -76,7 +83,8 @@ export class SlackUploader {
         headers: { 'Content-Type': 'application/octet-stream' }, redirect: 'error', signal: AbortSignal.timeout(30000) });
       if (!response.ok) throw Error('Slack binary upload failed; reconcile before retry');
       state.stage = 'completing'; await this.save(ledger, state);
-      await this.api('files.completeUploadExternal', { files: [{ id: state.fileId, title: reference.name.slice(0, 255) }], channel_id: to.target, thread_ts: to.thread });
+      await this.api('files.completeUploadExternal', { files: [{ id: state.fileId, title: reference.name.slice(0, 255) }], channel_id: to.target,
+        ...(to.thread ? { thread_ts: to.thread } : {}), ...(caption ? { initial_comment: caption } : {}) });
       state.stage = 'complete'; delete state.url; await this.save(ledger, state);
       return { fileId: state.fileId };
     } finally { this.active.delete(fingerprint); }

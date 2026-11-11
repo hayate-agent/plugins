@@ -22,7 +22,13 @@ export default {
       } finally { await file.close(); }
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
     const store = new Store(accountFile, { version: 1, account: config }); await store.load();
-    const identity = new Identity({ ...store.read().account, persist: account => store.change(data => { data.account = account; }) }); const pending = new Set();
+    const identity = new Identity({ ...store.read().account, sessions: store.read().sessions ?? [],
+      persist: account => store.change(data => { data.account = account; data.sessions = []; }),
+      persistSessions: (sessions, account) => store.change(data => {
+        if (data.account.username !== account.username || data.account.password.hash !== account.password.hash) throw Error('Account changed; sign in again');
+        data.sessions = sessions;
+      }),
+    }); const pending = new Set();
     const owned = work => {
       const operation = api.foregroundWork(work); pending.add(operation);
       void operation.then(() => pending.delete(operation), () => pending.delete(operation)); return operation;
@@ -31,7 +37,9 @@ export default {
       login: (...args) => owned(() => identity.login(...args)),
       account: (...args) => identity.account(...args),
       changeCredentials: (...args) => owned(() => identity.changeCredentials(...args)),
-      authenticate: (...args) => identity.authenticate(...args), revoke: (...args) => identity.revoke(...args),
+      authenticate: (...args) => identity.authenticate(...args),
+      renew: (...args) => owned(() => identity.renew(...args)),
+      revoke: (...args) => owned(() => identity.revoke(...args)),
     });
     api.onStop(async () => { identity.stop(); await Promise.allSettled([...pending]); await store.stop(); });
     api.registerService('identity', 1, service);

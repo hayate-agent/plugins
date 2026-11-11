@@ -28,6 +28,16 @@ The optional settings tool remains an API/backend presentation contract for
 operator-controlled declarative settings and trusted module lifecycle; there are
 no browser renderers in this package.
 
+## MCP management
+
+With a Core version that provides native MCP user management, type `/mcp` in the
+conversation UI. The gateway delivers it as an authenticated channel command;
+it is not an agent instruction or a `/v1/runs` model request. Status, server
+configuration and OAuth authorization links/results use the same conversation.
+`/mcp help` lists the operations. Enroll the actual WebUI actor in the Core
+administrator configuration when privileged user commands are restricted.
+OAuth browser approval remains with the user; do not paste access/refresh tokens.
+
 ## Network
 
 Absent explicit network configuration, bind to loopback. Network access requires

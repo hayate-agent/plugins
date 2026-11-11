@@ -15,7 +15,7 @@ test('headless identity binds opaque sessions to an audience, expires and revoke
   assert.equal(identity.authenticate('arbitrary-value', context.audience), null);
   now = 2000; assert.equal(identity.authenticate(session.token, context.audience), null);
   const next = await identity.login('operator', password, context);
-  identity.revoke(next.token, context.audience); assert.equal(identity.authenticate(next.token, context.audience), null);
+  await identity.revoke(next.token, context.audience); assert.equal(identity.authenticate(next.token, context.audience), null);
   identity.stop(); await assert.rejects(identity.login('operator', password, context));
   assert.doesNotMatch(JSON.stringify(identity), new RegExp(session.token));
 });
@@ -49,4 +49,55 @@ test('login attempts are bounded before password derivation and recover after th
   await assert.rejects(identity.login('operator', password, context), { status: 429 });
   now += 60001; const session = await identity.login('operator', password, context); assert.ok(session.token);
   identity.stop();
+});
+
+
+test('hash-only sessions survive restart; explicit renewal extends idle expiry, reads do not', async () => {
+  let now = 1000, saved = [];
+  const options = { username: 'admin', password: record, now: () => now, sessionLifetimeMs: 1000,
+    persistSessions: async sessions => { saved = structuredClone(sessions); } };
+  const context = { audience: 'https://agent.example', client: 'test' };
+  let identity = new Identity(options);
+  const session = await identity.login('admin', password, context);
+  assert.ok(!JSON.stringify(saved).includes(session.token)); assert.equal(saved[0].hash.length, 64);
+  identity.stop(); identity = new Identity({ ...options, sessions: saved });
+  assert.ok(identity.authenticate(session.token, context.audience));
+  now = 1800; assert.equal((await identity.renew(session.token, context.audience)).expiresAt, 2800);
+  await assert.rejects(identity.renew(session.token, 'https://other.example'), { status: 401 });
+  now = 2100; assert.ok(identity.authenticate(session.token, context.audience));
+  now = 2800; assert.equal(identity.authenticate(session.token, context.audience), null);
+  await assert.rejects(identity.renew(session.token, context.audience), { status: 401 });
+});
+
+test('failed renewal and logout do not commit unpersisted session changes; retry survives restart', async () => {
+  let now = 1000, saved = [], fail = false;
+  const options = { username: 'admin', password: record, now: () => now, sessionLifetimeMs: 1000,
+    persistSessions: async sessions => { if (fail) throw Error('disk failed'); saved = structuredClone(sessions); } };
+  const identity = new Identity(options), context = { audience: 'https://agent.example', client: 'test' };
+  const session = await identity.login('admin', password, context);
+  now = 1500; fail = true;
+  await assert.rejects(identity.renew(session.token, context.audience), /disk failed/);
+  assert.equal(identity.authenticate(session.token, context.audience).expiresAt, 2000);
+  await assert.rejects(identity.revoke(session.token, context.audience), /disk failed/);
+  assert.ok(identity.authenticate(session.token, context.audience));
+  fail = false; await identity.revoke(session.token, context.audience);
+  assert.equal(new Identity({ ...options, sessions: saved }).authenticate(session.token, context.audience), null);
+});
+
+
+test('unchanged credential save and parallel renewal cannot resurrect revoked sessions', async () => {
+  let entered, release, saved = [];
+  const saving = new Promise(resolve => { entered = resolve; });
+  const blocked = new Promise(resolve => { release = resolve; });
+  const options = { username: 'admin', password: record,
+    persist: async () => { entered(); await blocked; saved = []; },
+    persistSessions: async sessions => { saved = structuredClone(sessions); } };
+  const identity = new Identity(options), context = { audience: 'https://agent.example', client: 'test' };
+  const session = await identity.login('admin', password, context);
+  const change = identity.changeCredentials(session.token, context, { username: 'admin', currentPassword: password });
+  await saving;
+  const renewal = assert.rejects(identity.renew(session.token, context.audience), { status: 401 });
+  release(); await change; await renewal;
+  assert.equal(identity.authenticate(session.token, context.audience), null);
+  assert.equal(new Identity({ ...options, sessions: saved }).authenticate(session.token, context.audience), null);
 });

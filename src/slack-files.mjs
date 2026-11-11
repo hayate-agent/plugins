@@ -18,10 +18,22 @@ export function imageType(bytes) {
   return undefined;
 }
 export class SlackFiles {
-  constructor({ root, botToken, maxBytes = 10 * 1024 * 1024, fetch = globalThis.fetch }) {
-    this.root = root; this.botToken = botToken; this.maxBytes = maxBytes; this.fetch = fetch;
+  constructor({ root, botToken, maxBytes = 10 * 1024 * 1024, fetch = globalThis.fetch, info }) {
+    this.root = root; this.botToken = botToken; this.maxBytes = maxBytes; this.fetch = fetch; this.info = info;
+  }
+  async metadata(file, signal) {
+    if (!file || !/^F[A-Z0-9]+$/.test(file.id ?? '')) throw Error('Invalid Slack file ID');
+    if (file.size === undefined || !(file.url_private_download ?? file.url_private)) {
+      if (!this.info) throw Error('Slack file metadata is incomplete');
+      signal?.throwIfAborted();
+      const resolved = await this.info(file.id, signal);
+      if (resolved?.id !== file.id) throw Error('Slack file metadata identity mismatch');
+      return resolved;
+    }
+    return file;
   }
   async download(file, signal, sessionKey) {
+    file = await this.metadata(file, signal);
     if (typeof sessionKey !== 'string' || !sessionKey) throw Error('Attachment session is required');
     const directory = path.join(this.root, createHash('sha256').update(sessionKey).digest('hex'));
     if (!file || typeof file.id !== 'string' || !/^F[A-Z0-9]+$/.test(file.id)) throw Error('Invalid Slack file ID');

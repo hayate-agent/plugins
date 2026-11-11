@@ -82,16 +82,23 @@ Do not put a public HTTP-terminating proxy in front of legacy loopback mode.
   Cookies are `__Host-` scoped with `Secure`, `HttpOnly`, `SameSite=Strict`, `Path=/`
   and expiry. They are audience-bound to the canonical HTTPS origin. The browser
   cannot retrieve tokens through JavaScript or a JSON authentication response.
-- Default lifetime is one hour; `sessionLifetimeMs` in `identity.json` can be
-  explicitly configured between one second and 24 hours. Restart revokes every
-  session. Logout revokes the token server-side, expires the cookie and clears
-  this application's pending browser drafts before reloading.
+- Default idle lifetime is one hour; `sessionLifetimeMs` in `identity.json` can be
+  explicitly configured between one second and 24 hours. `POST /api/auth/renew`
+  extends a valid session and refreshes its secure cookie. The compatible WebUI
+  renews on trusted, visible user interaction at most once a minute; polling and
+  SSE do not extend idle time. Very short configured lifetimes below that cadence
+  can still expire during use.
+- Session hashes and expiries persist in private `<home>/identity/account.json`
+  and survive regular backend restarts. Existing memory-only sessions need one
+  new login after upgrading. Logout durably revokes the token before expiring the
+  cookie and clearing this application's pending browser drafts.
 - Revocation/expiry prevents further SSE data immediately at projection time and
   closes idle streams within the two-second server maintenance interval. HTTP
   mutation body parsing rechecks authentication after upload. The UI locks when
   expiry is detected and never automatically retries productive submissions.
-- Identity password derivations reserve host foreground admission and are drained
-  on stop. Stop revokes all issued sessions, including sessions held by stale clients.
+- Identity password derivations and session writes reserve host foreground
+  admission and are drained on stop. Stopped instances reject authentication;
+  unexpired persisted sessions remain valid on the next activation.
 
 For routine changes use **Account settings** in the sidebar: choose login name and
 optional new password, confirm the current password and save. Changes persist in

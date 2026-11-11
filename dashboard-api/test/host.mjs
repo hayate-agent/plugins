@@ -23,6 +23,7 @@ const harness = new Harness({ runtime, tickMs: 60000, busyMode: 'queue',
 });
 let releaseActive;
 let eventsReader;
+let mcp;
 try {
   const module = fileURLToPath(new URL('../index.mjs', import.meta.url));
   const settings = new SettingsService(path.join(home, 'settings.local.yaml'), {});
@@ -72,6 +73,26 @@ try {
   assert.equal(harness.releaseUpdateAdmission(lease.lease_id), true);
   await post(`/api/chats/${chat.id}/messages`, retried); await harness.drained();
   assert.equal(runtime.sessions.get(`webui:${chat.id}`).prompts.length, 3);
+  if (typeof settings.setMcpEnabled === 'function') {
+    const { McpManagement } = await fromCore('src/mcp-management.ts');
+    const { installCommands } = await fromCore('src/commands.ts');
+    mcp = new McpManagement({ agentDir: path.join(home, 'pi'), enabled: () => settings.effective().mcp?.enabled ?? false,
+      setEnabled: value => settings.setMcpEnabled(value), changed: async () => {} });
+    installCommands({ harness, mcp, approvals: { mode: 'off', tools: [] }, skills: () => [], reloadSkills: async () => { throw Error('MCP must not invoke skill discovery'); },
+      personality: { available: async () => [], set: async () => {} }, admins: ['webui:local'], agent: 'Test', restart: async () => {}, cwdFor: () => home });
+    const managed = await post('/api/chats', {});
+    const submit = async text => { await post(`/api/chats/${managed.id}/messages`, { id: randomUUID(), text }); await harness.drained(); };
+    await submit('/mcp add browser {"command":"node","enabled":false}');
+    await submit('/mcp');
+    let view = await (await fetch(channel.url + `/api/chats/${managed.id}`)).json();
+    assert(view.messages.some(m => m.role === 'assistant' && /configuration saved/.test(m.text)));
+    assert(view.messages.some(m => m.role === 'assistant' && /browser: disabled/.test(m.text)));
+    assert.equal(runtime.sessions.has(`webui:${managed.id}`), false, 'browser MCP commands never open a model session');
+    await submit('/mcp remove browser');
+    view = await (await fetch(channel.url + `/api/chats/${managed.id}`)).json();
+    assert(view.messages.some(m => m.role === 'assistant' && /browser: removed/.test(m.text)));
+    console.log('Actual same-origin browser-to-Core /mcp add/status/remove passed without model turns.');
+  } else console.log('MCP user-management integration not available in this older Core; not claimed tested.');
   const finalLease = harness.acquireUpdateAdmission(10000);
   assert.equal(finalLease.status, 'admitted');
   await harness.stop(1000); await plugins.stop();
@@ -79,6 +100,7 @@ try {
   console.log('Actual Core checks passed: plugin/gateway loading, routing, deduplication, idle/busy admission, lease fencing, same-ID retry and shutdown with an open SSE connection.');
 } finally {
   releaseActive?.();
+  await mcp?.close();
   await eventsReader?.cancel().catch(() => {});
   await harness.stop(1000); await plugins.stop();
   if (previousPort === undefined) delete process.env.HAYATE_WEBUI_PORT; else process.env.HAYATE_WEBUI_PORT = previousPort;
