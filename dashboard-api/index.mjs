@@ -269,8 +269,15 @@ export class WebUIChannel {
       this.#json(res, 200, { authenticated: true }); return;
     }
     if (req.method === 'POST' && url.pathname === '/api/auth/logout' && identity) {
-      await this.#body(req); identity.revoke(sessionToken(req), this.#origin);
+      await this.#body(req); await identity.revoke(sessionToken(req), this.#origin);
       res.setHeader('Set-Cookie', cookie('', 0)); this.#json(res, 200, { authenticated: false }); return;
+    }
+    if (req.method === 'POST' && url.pathname === '/api/auth/renew' && identity) {
+      requireSession(identity, req, this.#origin); await this.#body(req);
+      if (typeof identity.renew !== 'function') throw fail(409, 'Session renewal is unavailable');
+      const session = await identity.renew(sessionToken(req), this.#origin);
+      res.setHeader('Set-Cookie', cookie(sessionToken(req), session.expiresAt - Date.now()));
+      this.#json(res, 200, { authenticated: true, expiresAt: session.expiresAt }); return;
     }
     if (url.pathname === '/api/auth/account' && identity) {
       requireSession(identity, req, this.#origin);

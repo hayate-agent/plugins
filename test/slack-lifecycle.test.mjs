@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SlackGateway } from '../src/slack-gateway.mjs';
+import plugin, { SlackGateway } from '../src/slack-gateway.mjs';
 const options = { teamId: 'T1', channels: ['C1'], appToken: 'app', botToken: 'bot' };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function until(check) {
@@ -118,6 +118,53 @@ test('failed reconnect retries with a capped delay and stop prevents subsequent 
   await f.gateway.stop();
   await new Promise(r => setTimeout(r, 20)); assert.equal(attempts, 3);
 });
+test('foreground ownership is declared by the actual inert factory', () => {
+  assert.equal(plugin.updateAdmission, 'foreground-owned');
+});
+
+test('stop fences new sends synchronously and drains an outbound response body', async () => {
+  const f = fixture(); await f.gateway.start(async () => {});
+  let release, entered = false;
+  f.gateway.fetch = async () => ({ ok: true, json: async () => {
+    entered = true; await new Promise(resolve => { release = resolve; }); return { ok: true };
+  } });
+  const sending = f.gateway.send({ channel: 'slack', target: 'C1', thread: '1.1' }, 'reply');
+  await until(() => entered);
+  let stopped = false;
+  const stopping = f.gateway.stop(1000).then(() => { stopped = true; });
+  await assert.rejects(f.gateway.send({ channel: 'slack', target: 'C1', thread: '1.1' }, 'late'), /stopping/);
+  await tick(); assert.equal(stopped, false); assert.equal(f.gateway.pending.size, 1);
+  release(); await sending; await stopping;
+  assert.equal(f.gateway.pending.size, 0); assert.equal(f.sockets[0].readyState, 3);
+  f.gateway.fetch = f.transport.fetch;
+  await f.gateway.start(async () => {}); await f.gateway.stop();
+});
+
+test('whole upload stays owned until persistence settles; timeout refuses replacement', async () => {
+  const f = fixture(); await f.gateway.start(async () => {});
+  let release;
+  f.gateway.uploader = { send: async () => { await new Promise(resolve => { release = resolve; }); } };
+  const sending = f.gateway.send({ channel: 'slack', target: 'C1', thread: '1.1' }, '',
+    { deliveryId: 'delivery', attachments: [{ sessionKey: 'slack:T1:C1:1.1' }] });
+  await until(() => !!release);
+  await assert.rejects(f.gateway.stop(5), /did not quiesce/);
+  await assert.rejects(f.gateway.start(async () => {}), /not quiesced/);
+  assert.equal(f.gateway.pending.size, 1);
+  release(); await sending; await f.gateway.stop();
+  assert.equal(f.gateway.pending.size, 0);
+});
+
+test('failed accepted send reaches its caller but still drains without unhandled rejection', async () => {
+  const f = fixture(); await f.gateway.start(async () => {});
+  let reject;
+  f.gateway.fetch = async () => new Promise((_, fail) => { reject = fail; });
+  const sending = f.gateway.send({ channel: 'slack', target: 'C1', thread: '1.1' }, 'reply');
+  const rejected = assert.rejects(sending, /transport failed/);
+  const stopping = f.gateway.stop(1000);
+  reject(Error('private transport detail')); await rejected; await stopping;
+  assert.equal(f.gateway.pending.size, 0);
+});
+
 test('unclosed socket makes stop fail rather than claiming safe replacement', async () => {
   const f = fixture({ close: false }); await f.gateway.start(async () => {});
   await assert.rejects(f.gateway.stop(5), /did not quiesce/);

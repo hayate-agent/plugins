@@ -36,7 +36,7 @@ test('real formal review uses two independent Git changesets while the startup c
   t.after(() => rm(home, { recursive: true, force: true }));
   const roots = ['a', 'b'].map(name => path.join(home, name));
   const backend = { async review() { return '{"findings":[]}'; } };
-  const service = new ReviewService(home, reviewConfig(), backend, async () => {}, testReviewExecution(backend));
+  const service = new ReviewService(home, reviewConfig({ enabled: true, mandatory: { publish: true } }), backend, async () => {}, testReviewExecution(backend));
   for (const root of roots) {
     await mkdir(root); await git(root, ['init']); await git(root, ['config', 'user.name', 'Fixture']);
     await git(root, ['config', 'user.email', 'fixture@example.invalid']);

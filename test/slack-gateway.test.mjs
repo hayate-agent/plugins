@@ -54,7 +54,7 @@ test('outbound reply stays in allowed thread and does not unfurl links', async (
   await g.send({ channel: 'slack', target: 'C1', thread: '123.456' }, 'hello', { deliveryId: 'delivery-1' });
   assert.equal(request.body.thread_ts, '123.456'); assert.equal(request.body.unfurl_links, false);
   await assert.rejects(g.send({ channel: 'slack', target: 'C2', thread: '123' }, 'no'), /not allowed/);
-  await assert.rejects(g.send({ channel: 'slack', target: 'C1', thread: '123' }, 'x'.repeat(40000)), /length/);
+  await assert.rejects(g.send({ channel: 'slack', target: 'C1', thread: '123.0' }, 'x'.repeat(40000)), /length/);
 });
 test('factory has no network side effects and returns undefined when unconfigured', async () => {
   const names = ['SLACK_APP_TOKEN', 'SLACK_BOT_TOKEN', 'SLACK_TEAM_ID', 'SLACK_CHANNEL_IDS'];

@@ -10,14 +10,32 @@ export async function passwordRecord(password) {
 }
 
 /** Single-operator authentication, reusable by trusted transports. No HTTP or UI dependencies.
- * Session tokens exist only in memory and the transport's secure credential custody.
- * Process restart revokes every session. Principal is intentionally fixed until all
+ * Only token hashes are persisted; raw tokens remain in transport credential custody.
+ * Principal is intentionally fixed until all
  * legacy transports/data have multiuser ownership contracts. */
 export class Identity {
-  #sessions = new Map(); #limits = new Map(); #inflight = 0; #closed = false; #changes = Promise.resolve(); #persist;
-  constructor({ username, password, sessionLifetimeMs = 3600000, now = Date.now, persist }) {
+  #sessions = new Map(); #limits = new Map(); #inflight = 0; #closed = false; #changes = Promise.resolve(); #sessionChanges = Promise.resolve(); #persist; #persistSessions;
+  constructor({ username, password, sessionLifetimeMs = 3600000, now = Date.now, persist, sessions = [], persistSessions }) {
     if (typeof username !== 'string' || !username || username.length > 100 || password?.algorithm !== 'scrypt-v1' || !/^[a-f0-9]{64}$/.test(password.salt) || !/^[a-f0-9]{128}$/.test(password.hash) || !Number.isSafeInteger(sessionLifetimeMs) || sessionLifetimeMs < 1000 || sessionLifetimeMs > 86400000) throw Error('Invalid identity configuration');
-    this.username = username; this.password = password; this.lifetime = sessionLifetimeMs; this.now = now; this.#persist = persist;
+    this.username = username; this.password = password; this.lifetime = sessionLifetimeMs; this.now = now; this.#persist = persist; this.#persistSessions = persistSessions;
+    if (!Array.isArray(sessions) || sessions.length > 256) throw Error('Invalid persisted sessions');
+    for (const entry of sessions) {
+      if (!/^[a-f0-9]{64}$/.test(entry?.hash) || entry.principal !== 'operator' || typeof entry.audience !== 'string' || !entry.audience.startsWith('https://') || !Number.isSafeInteger(entry.expiresAt)) throw Error('Invalid persisted session');
+      if (entry.expiresAt > now()) { const { hash, ...session } = entry; this.#sessions.set(hash, session); }
+    }
+  }
+  #changeSessions(mutator) {
+    const work = this.#sessionChanges.then(async () => {
+      if (this.#closed) throw deny(503);
+      const account = { username: this.username, password: this.password };
+      const sessions = new Map([...this.#sessions].filter(([, session]) => session.expiresAt > this.now()).map(([hash, session]) => [hash, { ...session }]));
+      const result = mutator(sessions);
+      await this.#persistSessions?.([...sessions].map(([hash, session]) => ({ hash, ...session })), account);
+      if (this.#closed || account.password !== this.password || account.username !== this.username) throw deny();
+      this.#sessions = sessions;
+      return result;
+    });
+    this.#sessionChanges = work.catch(() => {}); return work;
   }
   async login(username, password, { audience, client }) {
     if (this.#closed) throw deny(503);
@@ -30,15 +48,18 @@ export class Identity {
     this.#inflight++;
     try {
       const candidate = typeof password === 'string' && password.length <= 1024 ? password : '';
-      const actual = await scrypt(candidate, this.password.salt, 64);
-      const valid = timingSafeEqual(actual, Buffer.from(this.password.hash, 'hex'));
-      if (!valid || username !== this.username || this.#closed) throw deny();
+      const accountPassword = this.password;
+      const actual = await scrypt(candidate, accountPassword.salt, 64);
+      const valid = timingSafeEqual(actual, Buffer.from(accountPassword.hash, 'hex'));
+      if (!valid || accountPassword !== this.password || username !== this.username || this.#closed) throw deny();
       // Rate-limit successful logins too: a known password is not a resource quota bypass.
-      for (const [id, session] of this.#sessions) if (session.expiresAt <= now) this.#sessions.delete(id);
-      if (this.#sessions.size >= 256) throw deny(429);
-      const token = randomBytes(32).toString('base64url'); const expiresAt = this.now() + this.lifetime;
-      this.#sessions.set(digest(token), { principal: 'operator', audience, expiresAt });
-      return { token, expiresAt, principal: 'operator' };
+      return await this.#changeSessions(sessions => {
+        if (accountPassword !== this.password || username !== this.username) throw deny();
+        if (sessions.size >= 256) throw deny(429);
+        const token = randomBytes(32).toString('base64url'); const expiresAt = this.now() + this.lifetime;
+        sessions.set(digest(token), { principal: 'operator', audience, expiresAt });
+        return { token, expiresAt, principal: 'operator' };
+      });
     } finally { this.#inflight--; }
   }
   authenticate(token, audience) {
@@ -47,6 +68,14 @@ export class Identity {
     if (!session || session.audience !== audience) return null;
     if (session.expiresAt <= this.now()) { this.#sessions.delete(key); return null; }
     return { principal: session.principal, expiresAt: session.expiresAt };
+  }
+  renew(token, audience) {
+    return this.#changeSessions(sessions => {
+      if (!this.authenticate(token, audience)) throw deny();
+      const session = sessions.get(digest(token));
+      session.expiresAt = this.now() + this.lifetime;
+      return { principal: session.principal, expiresAt: session.expiresAt };
+    });
   }
   account(token, audience) {
     if (!this.authenticate(token, audience)) throw deny();
@@ -59,20 +88,27 @@ export class Identity {
       let confirmation;
       try { confirmation = await this.login(this.username, currentPassword, { audience, client }); }
       catch (error) { if (error.status === 401) throw Object.assign(Error('Current password is incorrect'), { status: 400 }); throw error; }
-      this.revoke(confirmation.token, audience);
+      await this.revoke(confirmation.token, audience);
       let password = this.password;
       if (newPassword !== undefined && newPassword !== '') {
         try { password = await passwordRecord(newPassword); }
         catch { throw Object.assign(Error('New password must be 12–1024 characters'), { status: 400 }); }
       }
-      if (this.#closed || !this.authenticate(token, audience)) throw deny();
-      const config = { username: username.trim(), password, sessionLifetimeMs: this.lifetime };
-      await this.#persist(config);
-      this.username = config.username; this.password = password; this.#sessions.clear();
-      return { changed: true, signInRequired: true };
+      const commit = this.#sessionChanges.then(async () => {
+        if (this.#closed || !this.authenticate(token, audience)) throw deny();
+        const config = { username: username.trim(), password, sessionLifetimeMs: this.lifetime };
+        await this.#persist(config);
+        this.username = config.username; this.password = password; this.#sessions.clear();
+        return { changed: true, signInRequired: true };
+      });
+      this.#sessionChanges = commit.catch(() => {}); return commit;
     });
     this.#changes = work.catch(() => {}); return work;
   }
-  revoke(token, audience) { if (this.authenticate(token, audience)) this.#sessions.delete(digest(token)); }
+  revoke(token, audience) {
+    return this.#changeSessions(sessions => {
+      if (this.authenticate(token, audience)) sessions.delete(digest(token));
+    });
+  }
   stop() { this.#closed = true; this.#sessions.clear(); this.#limits.clear(); }
 }

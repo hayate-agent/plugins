@@ -6,13 +6,13 @@ test('manifest is importable JSON with exactly the implemented bot scopes and ev
   const manifest = JSON.parse(await readFile(new URL('../examples/slack-app-manifest.json', import.meta.url), 'utf8'));
   assert.equal(manifest.settings.socket_mode_enabled, true);
   assert.deepEqual(manifest.settings.event_subscriptions.bot_events, ['app_mention', 'message.im', 'message.channels', 'message.groups']);
-  assert.deepEqual([...manifest.oauth_config.scopes.bot].sort(), ['app_mentions:read', 'chat:write', 'files:read', 'im:history', 'channels:history', 'groups:history'].sort());
+  assert.deepEqual([...manifest.oauth_config.scopes.bot].sort(), ['app_mentions:read', 'chat:write', 'files:read', 'files:write', 'im:history', 'channels:history', 'groups:history', 'channels:read', 'groups:read'].sort());
   assert.ok(manifest.features.bot_user.display_name);
   assert.ok(manifest.display_information.name);
   assert.equal('request_url' in manifest.settings.event_subscriptions, false);
   assert.equal('interactivity' in manifest.settings, false);
   assert.equal(manifest.oauth_config.scopes.bot.includes('connections:write'), false);
-  assert.equal(manifest.oauth_config.scopes.bot.includes('files:write'), false);
+  assert.equal(manifest.oauth_config.scopes.bot.includes('files:write'), true);
 });
 
 test('setup distinguishes two mandatory tokens from optional restrictions and unfinished uploads', async () => {
@@ -20,7 +20,7 @@ test('setup distinguishes two mandatory tokens from optional restrictions and un
   assert.match(docs, /two tokens are the only required Slack settings/);
   assert.match(docs, /Optional restrictions/);
   assert.match(docs, /connections:write/);
-  assert.match(docs, /manifest deliberately excludes `files:write`/);
+  assert.match(docs, /`files:write`/);
   for (const module of ['slack-gateway.mjs', 'slack-files.mjs', 'slack-upload.mjs']) assert.ok(docs.includes(module));
   assert.equal(docs.includes('Absent all four'), false);
 });

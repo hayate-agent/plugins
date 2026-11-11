@@ -64,3 +64,19 @@ test('network configuration fails closed for missing identity, HTTP origin, ambi
   await chmod(f.network.keyFile, 0o644);
   await assert.rejects(networkOptions(f.network, f.services), /private/);
 });
+
+
+test('explicit renewal refreshes secure cookie and rejects missing session and cross-origin requests', async t => {
+  const f = await tlsFixture(); t.after(() => f.stop());
+  assert.equal((await f.call('/api/auth/renew', { method: 'POST', body: {} })).status, 401);
+  const login = await f.call('/api/auth/login', { method: 'POST', body: { username: 'admin', password: f.password } });
+  const cookie = login.headers['set-cookie'][0].split(';')[0];
+  assert.equal((await f.call('/api/auth/renew', { method: 'POST', headers: { Cookie: cookie, Origin: 'https://evil.example' }, body: {} })).status, 403);
+  const result = await f.call('/api/auth/renew', { method: 'POST', headers: { Cookie: cookie }, body: {} });
+  assert.equal(result.status, 200);
+  assert.equal(result.headers['set-cookie'][0].split(';')[0], cookie);
+  for (const flag of ['HttpOnly', 'Secure', 'SameSite=Strict', 'Max-Age=']) assert.ok(result.headers['set-cookie'][0].includes(flag));
+  assert.ok(JSON.parse(result.text).expiresAt > Date.now());
+  await f.call('/api/auth/logout', { method: 'POST', headers: { Cookie: cookie }, body: {} });
+  assert.equal((await f.call('/api/auth/renew', { method: 'POST', headers: { Cookie: cookie }, body: {} })).status, 401);
+});

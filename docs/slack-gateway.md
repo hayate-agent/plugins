@@ -4,20 +4,24 @@ This is an optional trusted GatewayModule v1, not a bundled Core channel. It use
 Node's native fetch/WebSocket and `node:crypto`, with no package installation at
 runtime. Use Node 24 (the tested runtime). One workspace per process, discovered
 from the bot token. DMs work without mentions and share a stable per-DM session.
-In public/private channels, an explicit mention engages a thread; subsequent
+In public/private channels, an explicit mention (whether delivered as `app_mention`
+or as a normal `message` event containing the bot mention) engages a thread; subsequent
 messages in that thread continue without another mention, including after restart.
-Other channel traffic is ignored. Thread membership is atomically persisted without
+Other channel traffic is ignored by default. Per-channel access, activation and reply
+location can be configured through the shared conversation-policy contract below.
+Thread membership is atomically persisted without
 message contents. A channel allowlist is optional, not required for connection.
 Inbound files and supported images use Core's session-bound attachment contract v1.
 History import, group-DM conversation handling, reactions and interactive approvals
-are not implemented. The outbound upload adapter is locally tested, but the usable
-Core-to-agent file-send integration remains unfinished, not removed from the mandate.
+are not implemented. Core's native messaging tool supports images/binary uploads
+with an optional caption, new channel posts, DMs and thread replies.
 
 ## 1. Prepare the Slack app (administrator)
 
 1. Create an internal Slack app from `examples/slack-app-manifest.json` in the
    intended test workspace. The manifest requests `app_mentions:read`,
-   `chat:write`, `files:read`, `im:history`, `channels:history` and `groups:history`.
+   `chat:write`, `files:read`, `im:history`, `channels:history`, `groups:history`,
+   `channels:read` and `groups:read`. The last two permit joined-channel discovery.
    Events are `app_mention`, `message.im`, `message.channels` and `message.groups`.
    Message/history scopes are required to receive DM and channel-thread events;
    the adapter does not call history APIs or import channel archives. Socket Mode
@@ -32,10 +36,9 @@ Core-to-agent file-send integration remains unfinished, not removed from the man
    restrict the workspace or channels as described below. Slack administrative
    status does not grant Hayate administrator rights.
 
-The manifest deliberately excludes `files:write`: the local upload adapter has
-fake-transport tests, but the Core-to-agent outbound file-send contract is not yet
-complete. Add that scope and reinstall the app only when the usable upload path
-is delivered. No slash-command or interactive-event permissions are requested. DM and channel
+The manifest includes `files:write` for the native file-send path. Existing installs
+need reinstalling only if that scope is missing; never assume a checked-in manifest
+changed the scopes of an already issued token. No slash-command or interactive-event permissions are requested. DM and channel
 message scopes are explicitly paired with their corresponding events. App-level `connections:write` is generated separately, not a bot scope.
 
 The manifest disables token rotation for this minimal internal app. If rotation
@@ -72,7 +75,7 @@ Pin the reviewed Core and plugin commits in the actual deployment; a branch name
 is not a release or evidence of activation.
 
 Copy the reviewed **exact** `src/slack-gateway.mjs`, `src/slack-files.mjs`,
-`src/slack-upload.mjs` and `src/slack-threads.mjs` from
+`src/slack-upload.mjs`, `src/slack-threads.mjs` and `src/conversation-policy.mjs` from
 the same pinned plugin commit into a new versioned directory, for example:
 
 ```
@@ -80,6 +83,7 @@ the same pinned plugin commit into a new versioned directory, for example:
 <home>/plugins/slack/<commit>/slack-files.mjs
 <home>/plugins/slack/<commit>/slack-upload.mjs
 <home>/plugins/slack/<commit>/slack-threads.mjs
+<home>/plugins/slack/<commit>/conversation-policy.mjs
 ```
 
 Use normal artifact/GitOps provisioning; no runtime downloads or mutable shared
@@ -102,6 +106,47 @@ If private administrative access is required, configure the explicit sender ID
 `slack:<workspace-id>:<user-id>` through the existing operator configuration;
 do not broaden an existing admin list merely to test chat delivery.
 
+## Channel policy: defaults, access and replies
+
+Use the shared Core `gateways.overrides.slack.conversation` contract, not Slack
+scopes or prompt prose as a substitute for admission policy:
+
+```yaml
+gateways:
+  overrides:
+    slack:
+      conversation:
+        allowedChannels: "*"
+        defaults:
+          users: "*"
+          activation: threads
+          replyLocation: thread
+        channels:
+          C_PRIVATE_OPERATOR:
+            activation: open
+            replyLocation: channel
+          C_RESTRICTED:
+            users: [U_OPERATOR_ID]
+            activation: mentions
+```
+
+`users: "*"` permits all human users; `users: []` denies all. Unknown/new channels
+inherit the defaults. Channel overrides change only the named fields.
+`activation` is `mentions` (mention every time), `threads` (mention to engage,
+then thread follow-ups), `open` (consider unaddressed input but allow NO_REPLY),
+or `disabled`. `replyLocation` is `thread` or `channel`; channel-level replies
+share a stable channel conversation. DMs still require no mention but enforce
+access restrictions. User checks happen before thread lookup or attachment
+download. Own/bot messages and edits cannot cause loops. This grants no admin
+or approver rights and does not auto-join Slack channels. The legacy
+`SLACK_CHANNEL_IDS` allowlist, if set, remains an additional hard restriction.
+
+An authenticated Core administrator can use `/conversation-policy defaults slack
+<JSON>`, `/conversation-policy channel slack <ID> <JSON>`, and
+`/conversation-policy channels slack <"*" or JSON ID array>` for persistent live
+changes. Local/installation/drop-in files use the ordinary restart/activation
+lifecycle. New restrictive policy on an older unsupported adapter fails closed.
+
 ## 3. Verify before admitting ordinary use
 
 - Mention the bot in a channel it has joined (and, if configured, allowed by the optional restriction): the answer must be in that message's
@@ -119,8 +164,13 @@ do not broaden an existing admin list merely to test chat delivery.
 - Verify reconnect, process restart and persisted module selection in the actual
   deployment. The local fake tests do not prove those live properties.
 - Replace with another version and check that the old receiver stops first.
-  Shutdown waits for accepted ingress to drain; timeout is an error, never a
-  claim of safe replacement. A failed start can be followed by the manager's
+  The factory declares `updateAdmission: "foreground-owned"`: creation is inert,
+  reconnects belong to the stopped channel, and shutdown synchronously fences
+  new ingress and outbound sends. Shutdown waits for the socket to close and for
+  accepted ingress, outbound response bodies and complete upload/persistence
+  operations to settle. Timeout is an error, never a claim of safe replacement.
+  Failed delivery outcomes still reach Core's durable outbox; shutdown does not
+  replay them or claim unknown external effects succeeded. A failed start can be followed by the manager's
   existing stop/rollback sequence. Versioned paths avoid the ESM cache trap.
 
 ## Attachment storage and trust boundary
@@ -136,10 +186,11 @@ not a complete image decoder or malware scanner. The provider may reject malform
 images. A model without image capability fails explicitly. Other binaries are
 provided as local file references, not automatically parsed.
 
-Only files in the actual mention event are handled; missing file URLs/metadata
-fail rather than claiming successful analysis. Slack file visibility/event shape
-must be verified with the installed app; fallback `files.info` lookup is not yet
-implemented. Downloads reject redirects, non-HTTPS and hosts other than
+Files in an admitted event are handled, including attachment-only messages.
+Missing URL/size metadata is resolved with bounded authenticated `files.info` by
+exact file ID before download; missing/unavailable metadata fails visibly.
+A rejected user or channel cannot trigger file lookups/downloads. Slack file
+visibility/event shape must still be verified with the installed app. Downloads reject redirects, non-HTTPS and hosts other than
 `files.slack.com`; tokens must never follow an external redirect.
 
 No automatic blob garbage collection is implemented. Preserve files for queued
@@ -149,7 +200,38 @@ needed. This is not unlimited archival storage.
 
 ## 4. Outbound behavior and operational limits
 
-Every logical text reply uses one `chat.postMessage` call with `thread_ts`, link/media
+### Native discovery and operator-authorized sends
+
+On Core versions exposing `plugin_message`, active Slack availability and destination
+format are supplied as host facts on every turn, including conversations on Matrix,
+API or another gateway. `plugin_message status` inspects live gateways;
+`destinations` with `gateway: "slack"` pages joined public/private channels using
+`users.conversations`. It never lists all workspace channels or joins channels.
+Slack does not include `is_member` on that endpoint: do not filter away real
+memberships based on the absent field. Names are untrusted data; use exact target
+IDs and follow `nextCursor`. This read-only listing requires `channels:read` and
+`groups:read`; missing scopes fail explicitly without hiding working send support.
+Existing installations that already grant these scopes need no Slack reinstall.
+
+`plugin_message send` accepts `gateway`, `target`, `text` and a stable `requestId`.
+For a file, supply `file: {path, name?}` and optional caption in `text`. The path
+must be a regular current-workspace file or an inbound blob owned by this
+conversation. Core snapshots at most 10 MiB, validates scope/name/hash and passes
+a host-bound attachment to Slack; no arbitrary file paths cross the adapter API.
+The external-upload API supports new channel posts, DMs and exact thread replies.
+The adapter verifies bytes and persists allocation/transfer/completion state;
+unknown effects are never blindly replayed. `files` capability is advertised only
+on hosts with the required outbound attachment contract.
+Omit `thread` for a new channel post (or DM); provide the exact timestamp for a
+thread reply. Membership and discovery grant no permission: the operator's current
+mandate still authorizes the destination and message. The tool stores no-replay
+receipts; retries with the same request return the retained outcome, and uncertain
+sends require reconciliation. Never work around tool availability by retrieving
+credentials or invoking a shell HTTP client. On older Core, automatic replies
+work, but the model-visible discovery/send tool is unavailable until Core rollout.
+
+Every logical text reply uses one `chat.postMessage` call, with `thread_ts` only
+when replying in a thread, link/media
 unfurling disabled, and a deterministic UUID derived from Core delivery ID plus
 workspace/channel/thread. Do not interpret `client_msg_id` as a proven Slack
 exactly-once guarantee. When Core supplies no delivery ID there is no such hint.
