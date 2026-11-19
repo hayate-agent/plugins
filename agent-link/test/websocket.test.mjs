@@ -45,6 +45,9 @@ test('outbound WSS works with no target listener, requires manual approval and k
   await f.central.request('operator', agent.id, 'messages', { action: 'send', streamId: stream.id, id: randomUUID(), text: 'Use outbound channel' });
   const result = await f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id });
   assert.equal(result.messages.at(-1).text, 'Remote answer'); assert.equal(f.received.length, 1);
+  // Over the real protocol, the stream-delta fallback resolves to a bounded page reload.
+  const changes = await f.central.request('operator', agent.id, 'messages', { action: 'changes', streamId: stream.id, since: 3 });
+  assert.equal(changes.reset, true); assert.deepEqual(changes.events, []); assert.equal(f.received.length, 1, 'changes never resubmits work');
   assert.equal(f.bindings.get(`plugin:workspaces:${stream.id}`).cwd, f.targetHome);
   assert.equal(f.relay.list('other').length, 0);
   assert.doesNotMatch(await readFile(path.join(f.centralHome, 'agent-link-relay/state.json'), 'utf8'), new RegExp(invite.code));

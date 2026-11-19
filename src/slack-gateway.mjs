@@ -26,6 +26,40 @@ export class SlackGateway {
   conversationPolicy = 1;
   configureGateway(settings) {
     this.policy = conversationPolicy(settings.conversation);
+    this.progressMode = settings.progress;
+  }
+  turnEvent(to, event) {
+    if (!this.progressMode || this.progressMode === 'off') return;
+    let line;
+    if (event.type === 'resource_usage') {
+      const names = { en: { loaded: 'loaded (application not confirmed)', created: 'created', updated: 'updated', recalled: 'recalled' }, de: { loaded: 'geladen (Anwendung nicht bestätigt)', created: 'erstellt', updated: 'aktualisiert', recalled: 'abgerufen' }, es: { loaded: 'cargado (aplicación no confirmada)', created: 'creado', updated: 'actualizado', recalled: 'consultada' }, ru: { loaded: 'загружен (применение не подтверждено)', created: 'создан', updated: 'обновлён', recalled: 'извлечена' } };
+      const locale = typeof event.locale === 'string' ? event.locale.toLowerCase().split('-')[0] : 'en';
+      const word = (names[locale] ?? names.en)[event.action] ?? event.action;
+      const name = typeof event.name === 'string' && /^[\p{L}\p{N}_.-]{1,80}$/u.test(event.name) ? ` · ${event.name}` : '';
+      line = `✓ ${event.resource === 'skill' ? 'Skill' : 'Memory'}${name} · ${word}`;
+    }
+    else if (event.type === 'tool') {
+      const name = event.name;
+      const label = name.startsWith('mcp__') || ['list_mcp_resources', 'list_mcp_resource_templates', 'read_mcp_resource'].includes(name) ? `MCP · ${name}`
+        : name === 'plugin_memory' ? `Memory · ${name}` : name.startsWith('plugin_skill_') ? `Skill · ${name}` : name;
+      const words = { en: ['started', 'completed', 'failed'], de: ['gestartet', 'beendet', 'fehlgeschlagen'], es: ['iniciado', 'finalizado', 'fallido'], ru: ['запущен', 'завершён', 'ошибка'] };
+      const locale = typeof event.locale === 'string' ? event.locale.toLowerCase().split('-')[0] : 'en';
+      const state = (words[locale] ?? words.en)[event.phase === 'start' ? 0 : event.error ? 2 : 1];
+      line = `${event.phase === 'start' ? '⏳' : event.error ? '⚠' : '✓'} ${label} ${state}`;
+    }
+    if (!line || this.stopped || this.closing) return;
+    // Coalesce bursts; telemetry is best-effort and never includes arguments/results.
+    const key = JSON.stringify(to);
+    const pending = this.progressPending.get(key) ?? { to, lines: [], timer: undefined };
+    if (pending.lines.length < 50) pending.lines.push(line);
+    this.progressPending.set(key, pending);
+    if (!pending.timer) {
+      pending.timer = setTimeout(() => {
+        this.progressPending.delete(key);
+        if (!this.stopped && !this.closing) void this.send(pending.to, pending.lines.join('\n'), { presentation: 'progress' }).catch(() => {});
+      }, 1500);
+      pending.timer.unref?.();
+    }
   }
   constructor(options, transport = {}) {
     this.options = options;
@@ -33,6 +67,8 @@ export class SlackGateway {
     this.fetch = transport.fetch ?? globalThis.fetch;
     this.Socket = transport.WebSocket ?? globalThis.WebSocket;
     this.pending = new Set();
+    this.progressPending = new Map();
+    this.progressMode = options.progress ?? 'off';
     this.stopped = true;
     this.connectTimeoutMs = transport.connectTimeoutMs ?? 15000;
     this.stopTimeoutMs = transport.stopTimeoutMs ?? 15000;
@@ -296,6 +332,8 @@ export class SlackGateway {
   async stop(budgetMs = this.stopTimeoutMs) {
     this.closing = true;
     this.stopped = true;
+    for (const pending of this.progressPending.values()) clearTimeout(pending.timer);
+    this.progressPending.clear();
     clearTimeout(this.timer); this.timer = undefined;
     const socket = this.socket;
     let closed = Promise.resolve();

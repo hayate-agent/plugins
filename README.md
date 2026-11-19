@@ -12,6 +12,13 @@ installed explicitly, not fetched or enabled automatically by Core.
 Core includes a tested set of plugins. You do not need to install this repository
 separately for a normal installation.
 
+## Matrix activity output
+
+Matrix displays native activity, including Dispatcher and Worker runs, by default.
+Set `MATRIX_NATIVE_ACTIVITY=false` to disable this output explicitly.
+`MATRIX_NATIVE_ACTIVITY_COALESCE_MS` controls update coalescing (default: 1000 ms).
+This switch is independent of the legacy `MATRIX_PROGRESS` setting.
+
 ## Headless workspace and agent overlay (development)
 
 [Workspace architecture and setup](docs/workspace-architecture.md) describes the
@@ -85,6 +92,39 @@ provider credentials, agent identities or deployment-specific configuration.
 - [Core](https://github.com/hayate-agent/core) — runtime, terminal interface and documentation
 - [WebUI](https://github.com/hayate-agent/webui) — independent browser dashboard; consumes the backend API
 - [Deployments](https://github.com/hayate-agent/deployments) — deployment examples
+
+## Nightly delivery
+
+The default nightly strategy distinguishes assigned skill/instance repositories,
+private product variants and deliberate upstream contributions. Core/WebUI/plugin
+adaptations can remain in assigned non-upstream repos as reproducible, versioned
+variants; upstream is not mandatory for every local improvement. Product-source
+changes require independent external review before integration/live activation,
+including private variants. Self-review, CI or a different merger alone do not
+suffice. Existing external review workflows supply evidence; required Forgejo
+approvals remain0. Missing review is a concrete blocker, not a self-grant.
+Good tested changes should be committed, pushed and handed into the normal
+integration/release path using existing authority, not left as local proposals.
+Repo owners are resolved from configuration/SOUL/remotes, not invented by the
+strategy. Existing operator scope, credentials, protection and time budgets remain.
+
+Experiment receipts may carry structured `delivery` evidence: stream, local /
+pushed / integrated / deployed / blocked status, repository, branch, full commit,
+optional PR, activation evidence or concrete blocker. The strategy distinguishes
+reported facts from independent verification. A push is not deployment. It can
+update delivery on retained candidates without counting another experiment;
+compatible Core hosts retain unactivated candidates across nights. Missing legacy
+evidence is unverified, not proof of non-publication. Blockers stay visible and
+unsafe candidates can be rejected. No blanket merge restriction or new permission
+is introduced. See Core's nightly controller documentation for host persistence
+and closure semantics.
+
+## Memory turn handoff
+
+[Latest turn handoff](docs/memory-handoff.md) describes the bounded deterministic
+MemoryService record, provider-authoritative latest lookup, legacy pending-payload
+preservation and focused peer-Core contract checks. It does not prune host history
+or grant replay authority.
 
 ## Public snapshot updates
 

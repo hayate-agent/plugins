@@ -1,5 +1,7 @@
 FROM node:24-bookworm-slim AS build
 WORKDIR /build
+COPY workspace/package.json workspace/package-lock.json ./workspace/
+RUN npm ci --prefix workspace --omit=dev --ignore-scripts
 COPY agent-link/package.json agent-link/package-lock.json ./agent-link/
 RUN npm ci --prefix agent-link --include=dev --ignore-scripts
 COPY agent-link/scripts ./agent-link/scripts
@@ -13,6 +15,7 @@ COPY --chown=node:node shared ./shared
 COPY --chown=node:node credentials ./credentials
 COPY --chown=node:node identity ./identity
 COPY --chown=node:node workspace ./workspace
+COPY --from=build --chown=node:node /build/workspace/node_modules ./workspace/node_modules
 COPY --chown=node:node agent-hub ./agent-hub
 COPY --chown=node:node agent-link ./agent-link
 COPY --from=build --chown=node:node /build/agent-link/vendor ./agent-link/vendor

@@ -13,6 +13,11 @@ const scope = values => Array.isArray(values) && values.length <= 4 && values.ev
 
 /** Outbound WSS rendezvous. Idle sockets are not foreground work; RPC/changes are. */
 export class AgentRelay {
+  #listeners = new Set(); #revisions = new Map(); #epoch = randomUUID();
+  subscribe(owner, listener) { const entry = { owner, listener }; this.#listeners.add(entry); return () => this.#listeners.delete(entry); }
+  revision(owner) { return this.#revisions.get(owner) ?? this.#epoch; }
+  #emit(owner, event) { for (const entry of this.#listeners) if (entry.owner === owner) { try { entry.listener(event); } catch { /* Isolated consumer. */ } } }
+  #changed(owner) { const revision = randomUUID(); this.#revisions.set(owner, revision); for (const entry of this.#listeners) if (entry.owner === owner) entry.listener({ type: 'changed', revision }); }
   #server; #wss; #timer; #closing = false; #sessions = new Map(); #pending = new Map(); #work = new Set(); #sockets = new Set(); #rates = new Map(); #accepting = new Set(); #stop;
   constructor({ home, origin, host, port, tls, foregroundWork = work => work(), requestTimeoutMs = 15000, heartbeatMs = 20000 }) {
     this.origin = canonicalOrigin(origin); this.host = host; this.port = port; this.tls = tls; this.foregroundWork = foregroundWork;
@@ -96,7 +101,9 @@ export class AgentRelay {
   }); }
   #disconnect(id, session = this.#sessions.get(id)) {
     if (!session) return;
-    if (this.#sessions.get(id) === session) this.#sessions.delete(id);
+    // A pending trailing invalidation fires now: the disconnect itself invalidates.
+    if (session.trailing) { clearTimeout(session.trailing); session.trailing = undefined; const agent = this.#record(id); if (agent) this.#changed(agent.owner); }
+    if (this.#sessions.get(id) === session) { this.#sessions.delete(id); const agent = this.#record(id); if (agent) this.#changed(agent.owner); }
     for (const pending of [...this.#pending.values()]) if (pending.session === session) pending.finish(Error('Agent disconnected; outcome unknown. No automatic retry'));
   }
   async open({ listen = true } = {}) {
@@ -139,12 +146,41 @@ export class AgentRelay {
         if (!this.#client(id, token)) { ws.terminate(); return; }
         const previous = this.#sessions.get(id); if (previous) { this.#disconnect(id, previous); previous.socket.close(4001, 'Connection replaced'); }
         const session = { socket: ws, token, alive: true }; this.#sessions.set(id, session);
+        this.#changed(this.#record(id).owner);
+        // Opt-in streaming deltas. Older targets never advertise and keep invalidations.
+        const advertised = String(req.headers['x-hayate-agent-features'] ?? '').split(',').map(value => value.trim());
+        if (advertised.includes('stream-delta-v1')) ws.send(JSON.stringify({ type: 'features', features: ['stream-delta-v1'] }));
         ws.on('pong', () => { session.alive = true; }); ws.on('error', () => {});
         ws.on('close', () => this.#disconnect(id, session));
         ws.on('message', (bytes, binary) => {
           if (binary || !this.#client(id, token) || this.#sessions.get(id) !== session) { ws.close(4003); return; }
           try {
             const frame = JSON.parse(bytes.toString('utf8')), pending = this.#pending.get(frame.id);
+            if (frame.type === 'changed' && frame.revision && typeof frame.revision === 'string' && frame.revision.length <= 128) {
+              const agent = this.#client(id, token);
+              if (!agent?.approved) throw refused();
+              this.#changed(agent.owner); return;
+            }
+            if (frame.type === 'event') {
+              // The handler above already authenticated this socket for `id`.
+              const agent = this.#record(id), envelope = frame.envelope;
+              // Same grant as a `messages` request (approved, not revoked or
+              // expired, capability in scope). Targets only emit their own
+              // readable sessions; workspace targets publish no events.
+              if (!agent?.approved || agent.revoked || agent.expiresAt <= Date.now() || !agent.capabilities?.includes('messages')) return;
+              if (!envelope || typeof envelope !== 'object' || typeof envelope.session !== 'string' || envelope.session.length > 128 || !Number.isSafeInteger(envelope.seq) || typeof envelope.kind !== 'string' || envelope.kind.length > 64 || typeof envelope.epoch !== 'string' || envelope.epoch.length > 64 || bytes.length > 70000) throw refused();
+              // Bounded fan-out; dropped events are repaired by clients via `changes`.
+              const bucket = session.bucket ??= { at: Date.now(), n: 0 }; if (Date.now() - bucket.at >= 1000) { bucket.at = Date.now(); bucket.n = 0; }
+              // Over budget: drop the delta and invalidate now and once more at
+              // the end of the window, so a repair always happens AFTER the last
+              // dropped event (no permanently stale client).
+              if (++bucket.n > 200) {
+                if (bucket.n === 201) this.#changed(agent.owner);
+                if (!session.trailing) session.trailing = setTimeout(() => { session.trailing = undefined; this.#changed(agent.owner); }, Math.max(1, bucket.at + 1000 - Date.now()));
+                return;
+              }
+              this.#emit(agent.owner, { type: 'event', relayAgent: id, envelope }); return;
+            }
             if (frame.type !== 'response' || !UUID.test(frame.id) || typeof frame.ok !== 'boolean') throw refused();
             if (!pending) return; // Late response to a timed-out/cancelled request is never replayed.
             if (pending.session !== session) throw refused();

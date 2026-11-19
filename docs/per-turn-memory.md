@@ -1,0 +1,11 @@
+# Meaningful per-turn reported handovers
+
+Automatic capture must not require tool use. A tool-free operator preference, constraint, decision or useful explanation can be durable knowledge. Empty/NO_REPLY outputs, greeting-only exchanges, and *entirely* plain transport timeouts are not knowledge. An operational failure such as `Error: migration partially applied; do not rerun` is important and must be retained.
+
+Capture stores a bounded reported handover: request excerpt, result/decision head and tail, and an explicit continuation boundary preserving original task IDs, authority, deadlines, budgets and uncertain-effect reconciliation. A model report is NOT independent verification or permission to replay or resume stopped work. This is not an additional synchronous model summarization request.
+
+The `turn-handover-v3` key hashes every payload-determining input, including request, outcome and timestamp presence. Exact retries stay byte-identical. If a host timestamp is absent, mark the report review-due immediately using the fixed Unix epoch rather than generating a new timestamp under a stable key or weakening the existing review requirement. Different request/outcome/timestamp payloads cannot silently conflict under an old key. Existing v2 pending files retain their exact payload and flush normally. No old evidence, deadlines or pending jobs are erased, and no mandatory expiry is introduced.
+
+Core's companion working-memory layer handles cheap local per-conversation SDK-step capsules separately from the selected long-term provider. Do not hold every SDK response/tool boundary waiting for semantic-provider generation. Durable provider capture/retries still happen for meaningful settled host turns.
+
+Compatibility CI must run against the current Core head. The first102 compatibility run failed only the old scoped-stop30ms timing assertion on a contended CI filesystem, after its real durable write took85ms. Core440 replaces that timing assumption with an explicit completion-vs-still-held-foreign-scheduler test, retaining the actual cancellation, ownership and owned-worker-drain assertions. This is not a runtime gate exemption or permission to merge without the required compatibility check.

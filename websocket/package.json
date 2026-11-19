@@ -1,0 +1,8 @@
+{
+  "name": "@hayate-agent/websocket",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test test/*.test.mjs" },
+  "dependencies": { "ws": "8.22.1" }
+}
