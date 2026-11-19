@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Workspace } from './service.mjs';
+import { loadDecoder } from './media-decode.mjs';
 export { Workspace };
 
 /** Headless agent overlay. WebUI, TUI and messaging are consumers of the same service. */
@@ -14,6 +15,8 @@ export default {
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (config.roots !== undefined && (!Array.isArray(config.roots) || config.roots.some(p => typeof p !== 'string' || !path.isAbsolute(p)))) throw Error('workspace.json roots must be absolute directories');
     const workspace = new Workspace({ home: api.home, cwd: api.cwd, agent: api.agent, roots: config.roots, executionContexts: api.executionContexts });
+    // Uploads need the Core attachment channel and the optional pixel decoder.
+    workspace.imageUploads = api.channelAttachments === 1 && Boolean(await loadDecoder());
     await workspace.open();
     api.onStop(() => workspace.stop());
     api.registerService('workspaces', 1, workspace);

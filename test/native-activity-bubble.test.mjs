@@ -14,6 +14,22 @@ const load = async () => ({
   ...(await import(pathToFileURL(path.join(core, 'src/activity.ts')).href)),
 });
 
+test('Matrix native activity defaults on and supports explicit opt-out', async () => {
+  const { matrixOptionsFromEnv, MatrixChannel } = await load();
+  const base = { MATRIX_HOMESERVER: 'https://matrix.test', MATRIX_ACCESS_TOKEN: 'test' };
+  for (const [flag, expected] of [[undefined, true], ['', true], ['true', true], ['false', false], ['0', false]]) {
+    const options = matrixOptionsFromEnv({ ...base, ...(flag === undefined ? {} : { MATRIX_NATIVE_ACTIVITY: flag }) }, os.tmpdir());
+    assert.equal(options.nativeActivity, expected, `flag=${String(flag)}`);
+    const channel = new MatrixChannel(options);
+    const calls = [];
+    channel.native = { event: (...args) => calls.push(['event', ...args]), metadata: (...args) => calls.push(['metadata', ...args]) };
+    const room = { channel: 'matrix', room: '!test:matrix.test' };
+    channel.taskActivity(room, { type: 'snapshot', snapshot: { role: 'worker', parent: 'task-1' } });
+    channel.dispatcherActivity(room, 'task-1', 'running');
+    assert.deepEqual(calls.map(c => c[0]), expected ? ['event', 'metadata'] : []);
+  }
+});
+
 async function fixture(delayMs = 0) {
   const home = await mkdtemp(path.join(os.tmpdir(), 'native-bubble-'));
   const calls = [];

@@ -49,7 +49,7 @@ test('capture -> due batch -> isolated host -> durable provider -> recall', { sk
     now = 7200000;
     assert.equal(await worker.tick(), true);
     assert.equal(prompts, 1);
-    assert.deepEqual(opened[0].options, { ephemeral: true });
+    assert.deepEqual(opened[0].options, { ephemeral: true, assessmentPurpose: 'handover' });
     assert.ok(!opened[0].key.includes(turn.sessionKey));
     const hits = await service.recall(turn.sessionKey, 'reconcile');
     assert.equal(hits.length, 1);

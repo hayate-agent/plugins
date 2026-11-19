@@ -8,7 +8,7 @@ import { request } from 'node:https';
 import { Identity, passwordRecord } from '../../identity/service.mjs';
 import { WebUIChannel } from '../index.mjs';
 import { Workspace } from '../../workspace/service.mjs';
-export async function tlsFixture() {
+export async function tlsFixture({ extraServices = {} } = {}) {
   const home = await mkdtemp(path.join(os.tmpdir(), 'webui-tls-'));
   try {
     const keyFile = path.join(home, 'key.pem'), certFile = path.join(home, 'cert.pem');
@@ -20,7 +20,7 @@ export async function tlsFixture() {
     const identity = new Identity({ username: 'admin', password: await passwordRecord(password), persist: config => writeFile(path.join(home, 'account-fixture.json'), JSON.stringify(config), { mode: 0o600 }) });
     const network = { host: '127.0.0.1', origin, keyFile, certFile };
     const workspace = new Workspace({ home, cwd: home, executionContexts: { async bind() {} } }); await workspace.open();
-    const services = { get: name => name === 'identity' ? { version: 1, implementation: identity } : name === 'workspaces' ? { version: 1, implementation: workspace } : undefined };
+    const services = { get: name => name === 'identity' ? { version: 1, implementation: identity } : name === 'workspaces' ? { version: 1, implementation: workspace } : extraServices[name] };
     const channel = new WebUIChannel({ home, port, network, services });
     await channel.start(async () => {});
     const call = (route, { method = 'GET', headers = {}, body } = {}) => new Promise((resolve, reject) => {

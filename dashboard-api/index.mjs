@@ -58,7 +58,8 @@ export class WebUIChannel {
   #access;
   constructor({ home, agent = 'Hayate', port = 3210, services, network, localAgent = true }) {
     this.#services = services; this.#networkConfig = network; this.#localAgent = localAgent;
-    this.#workspace = new WorkspaceHTTP(services, { localAgent });
+    // Durable command journal: at-most-once execution survives restarts.
+    this.#workspace = new WorkspaceHTTP(services, { localAgent, ledgerFile: home ? path.join(home, 'webui', 'command-ledger.json') : undefined });
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw Error('Invalid WebUI port');
     this.port = port;
     this.home = home;
@@ -178,7 +179,61 @@ export class WebUIChannel {
       this.#sockets.add(socket);
       socket.once('close', () => this.#sockets.delete(socket));
     });
+    const liveRelay = this.#services?.get('agent-link-relay');
+    const WebSocketServer = liveRelay?.version === 1 ? (await import('../agent-link/vendor/websocket.mjs')).WebSocketServer : null;
+    // Command frames carry at most one media chunk (≤64000 base64 characters).
+    const browserWS = WebSocketServer ? new WebSocketServer({ noServer: true, maxPayload: 96 * 1024, perMessageDeflate: false, handleProtocols: protocols => protocols.has('hayate.workspace.v1') ? 'hayate.workspace.v1' : false }) : null;
+    server.once('close', () => { if (browserWS) { for (const client of browserWS.clients) client.terminate(); browserWS.close(); } });
     server.on('upgrade', (req, socket, head) => {
+      if (req.url === '/api/workspace/live') {
+        try {
+          if (!browserWS || this.#closing || req.headers.host !== new URL(this.#origin).host || req.headers.origin !== this.#origin || req.headers['sec-websocket-protocol'] !== 'hayate.workspace.v1' || browserWS.clients.size >= 32) throw fail(403, 'WebSocket refused');
+          const identity = this.#access.identity;
+          const session = identity ? requireSession(identity, req, this.#origin) : { principal: 'operator' };
+          const principal = session?.principal ?? 'operator';
+          const relay = this.#services?.get('agent-link-relay');
+          if (relay?.version !== 1 || typeof relay.implementation.subscribe !== 'function') throw fail(409, 'Live relay unavailable');
+          const authorized = () => !identity || !!identity.authenticate(sessionToken(req), this.#origin);
+          browserWS.handleUpgrade(req, socket, head, ws => {
+            const send = event => { if (!authorized()) { ws.close(4003); return; } if (ws.bufferedAmount > 65536) { ws.close(1013); return; } if (ws.readyState === 1) ws.send(JSON.stringify(event)); };
+            // Stream deltas carry the relay's target id; browsers address the
+            // principal's registered hub agent. Unregistered targets are dropped.
+            const hub = this.#services?.get('agent-hub');
+            const agentFor = relayAgent => hub?.version === 1 ? hub.implementation.list(principal).find(agent => agent.adapter === 'hayate-wss' && agent.endpoint.endsWith('/agents/' + relayAgent))?.id : undefined;
+            const deliver = event => {
+              if (event?.type !== 'event') return send(event);
+              if (!authorized()) { ws.close(4003); return; }
+              // A browser that cannot keep up is disconnected rather than silently
+              // missing deltas; its reconnect resynchronizes via `changes`.
+              if (ws.bufferedAmount > 262144) { ws.close(1013); return; }
+              const agentId = agentFor(event.relayAgent); if (!agentId) return;
+              this.#workspace.cache.ingest(principal, agentId, event.envelope);
+              send({ type: 'event', agentId, envelope: event.envelope });
+            };
+            const unsubscribe = relay.implementation.subscribe(principal, deliver);
+            const timer = setInterval(() => { if (!authorized()) ws.close(4003); else if (ws.readyState === 1) ws.ping(); }, 10000);
+            // Commands (send, stop, media chunks): same opId ledger as the POST
+            // fallback. Each is acknowledged on this socket; at most 8 in flight.
+            let inFlight = 0;
+            ws.on('message', (bytes, binary) => {
+              let frame; try { frame = binary ? undefined : JSON.parse(bytes.toString('utf8')); } catch { /* invalid */ }
+              if (frame?.type !== 'command' || typeof frame.opId !== 'string') { ws.close(1008, 'Invalid frame'); return; }
+              if (!authorized()) { ws.close(4003); return; }
+              const ack = outcome => { if (ws.readyState === 1 && authorized()) ws.send(JSON.stringify({ type: 'ack', opId: frame.opId, ...outcome })); };
+              if (this.#closing) { ack({ ok: false, status: 503, error: 'WebUI stopping', executed: false }); return; }
+              if (inFlight >= 8) { ack({ ok: false, status: 429, error: 'Too many commands in flight', executed: false }); return; }
+              inFlight++;
+              // Accepted host work is owned by this process and drained by stop().
+              const work = this.#workspace.command(principal, frame).then(ack, () => ack({ ok: false, status: 502, error: 'Agent operation failed or outcome unknown' })).finally(() => { inFlight--; });
+              this.#requests.add(work); void work.finally(() => this.#requests.delete(work));
+            });
+            ws.on('error', () => {});
+            ws.once('close', () => { clearInterval(timer); unsubscribe(); });
+            send({ type: 'changed', revision: relay.implementation.revision(principal) });
+          });
+        } catch { socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); }
+        return;
+      }
       const relay = this.#services?.get('agent-link-relay');
       if (this.#closing || relay?.version !== 1 || !req.socket.encrypted || req.url !== '/api/agent-link/v1/connect') { socket.destroy(); return; }
       const task = relay.implementation.handleUpgrade(req, socket, head);
@@ -255,7 +310,7 @@ export class WebUIChannel {
       if (!req.socket.encrypted || relay?.version !== 1) throw fail(404, 'Agent relay not enabled');
       await relay.implementation.handleRequest(req, res); return;
     }
-    if (req.method !== 'GET' && (req.headers.origin !== this.#origin || req.headers['x-hayate-webui'] !== '1')) throw fail(403, 'Same-origin WebUI request required');
+    if (!['GET', 'HEAD'].includes(req.method) && (req.headers.origin !== this.#origin || req.headers['x-hayate-webui'] !== '1')) throw fail(403, 'Same-origin WebUI request required');
     const url = new URL(req.url, this.#origin);
     const identity = this.#access.identity;
     if (identity) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
@@ -270,6 +325,8 @@ export class WebUIChannel {
     }
     if (req.method === 'POST' && url.pathname === '/api/auth/logout' && identity) {
       await this.#body(req); await identity.revoke(sessionToken(req), this.#origin);
+      // Immutable history pages may sit in the browser HTTP cache: drop them.
+      res.setHeader('Clear-Site-Data', '"cache"');
       res.setHeader('Set-Cookie', cookie('', 0)); this.#json(res, 200, { authenticated: false }); return;
     }
     if (req.method === 'POST' && url.pathname === '/api/auth/renew' && identity) {
@@ -439,6 +496,7 @@ export class WebUIChannel {
       this.#server = undefined;
     }
     await Promise.allSettled([...this.#requests]);
+    await this.#workspace.ledger.close();
     await this.#refreshWork;
     await this.#serial;
     this.#live.clear();

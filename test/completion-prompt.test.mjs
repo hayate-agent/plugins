@@ -28,7 +28,13 @@ test('checker independently overrides model WAIT without bypassing genuine holds
   assert.match(text, /Independently determine genuine blockers/);
   assert.match(text, /Override a model-authored WAIT/);
   assert.match(text, /explicit user stop or pause/);
-  assert.match(text, /permission, security, missing credentials or external-dependency holds/);
+  assert.match(text, /never invent a security hold/);
+  assert.match(text, /Name the concrete source and affected action/);
+  assert.match(text, /request a focused clarification and use the operator's answer/);
+  assert.match(text, /blocked, stalled or failed worker does not prohibit Main takeover/);
+  assert.match(text, /worker actually executing the same work concurrently is active/);
+  assert.match(text, /inspect prior effects when needed for that action/);
+  assert.doesNotMatch(text, /continue only with a bounded verification\/reconciliation step/);
   assert.match(text, /preparation does not grant authority or bypass host policy/);
   assert.match(text, /never poll early or repeat the waiting step/);
 });
@@ -89,6 +95,9 @@ test('main action regression corpus packages task and evidence without changing 
 const core = process.env.HARNESS_CORE_ROOT;
 test('scripted checker JSON round-trips through the real core parser', { skip: !core }, async () => {
   const { assessCompletion } = await import(pathToFileURL(path.join(core, 'src/completion-check.ts')).href);
+  const { ValidatorRegistry } = await import(pathToFileURL(path.join(core, 'src/validator.ts')).href);
+  const { legacyLLMProvider } = await import('../src/completion-validator-plugin.ts');
+  const registry = new ValidatorRegistry(); registry.register(legacyLLMProvider); registry.select('legacy-llm');
   for (const action of [undefined, 'compact', 'handover', null, 'invented']) {
     const next = 'Run remaining authorized regression; no deployment.';
     const verdict = { state: 'continue', next, ...(action === undefined ? {} : { contextPreparation: action }) };
@@ -97,7 +106,7 @@ test('scripted checker JSON round-trips through the real core parser', { skip: !
       checked = true;
       assert.equal(text, prompt());
       return JSON.stringify(verdict);
-    } }, input, reply, { task }, new AbortController().signal, undefined, now, completionPrompt);
+    } }, input, reply, { task }, new AbortController().signal, undefined, now, completionPrompt, undefined, 10000, registry);
     assert.equal(checked, true);
     assert.deepEqual(result, action === null || action === 'invented' ? undefined : verdict);
   }

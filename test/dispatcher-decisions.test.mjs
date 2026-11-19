@@ -41,6 +41,20 @@ test('controls reject irrelevant task text rather than silently discarding steer
   assert.equal(calls.length, 0);
 });
 
+test('full required native control envelope normalizes only complete inert placeholders', async () => {
+  const { tool, calls } = setup();
+  const shape = { action: 'resume', id: 'execution', requestId: 'resume-v1', task: '', taskId: '', questionId: '', answer: '', decision: '', offset: 0, limit: 1, field: 'input', charOffset: 0 };
+  assert.equal(await tool.execute(shape, parent), 'Control recorded');
+  for (const [key, value] of Object.entries({ task: 'steer', taskId: 'foreign', questionId: 'q', answer: 'yes', decision: 'approve', offset: 1, limit: 2, field: 'decisions', charOffset: 1, unknown: '' })) {
+    await assert.rejects(tool.execute({ ...shape, [key]: value }, parent), /does not accept task/);
+  }
+  for (const key of ['task', 'taskId', 'questionId', 'answer', 'decision', 'offset', 'limit', 'field', 'charOffset']) {
+    const partial = { ...shape }; delete partial[key];
+    await assert.rejects(tool.execute(partial, parent), /does not accept task/);
+  }
+  assert.deepEqual(calls, [['control', 'parent', 'execution', 'resume']]);
+});
+
 for (const sessionKey of ['dispatch:worker', 'subagent:worker']) {
   test(`nested ${sessionKey} cannot use tool or command for decisions`, async () => {
     const { tool, command, calls } = setup();

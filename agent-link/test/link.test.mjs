@@ -29,6 +29,12 @@ test('two headless instances pair over verified TLS, scope projects, exchange wo
   assert.equal(f.received.length, 1); assert.equal(f.received[0].turn.model, 'provider/model');
   const conversation = await f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id });
   assert.equal(conversation.messages.at(-1).text, 'Remote answer');
+  const renamed = await f.central.request('operator', agent.id, 'streams', { action: 'rename', streamId: stream.id, title: 'Renamed remote work' });
+  assert.equal(renamed.title, 'Renamed remote work');
+  assert.equal(f.workspace.stream('operator', stream.id).title, 'Renamed remote work');
+  assert.deepEqual(renamed.messages, conversation.messages);
+  assert.equal(f.received.length, 1, 'Rename does not execute work');
+  await assert.rejects(f.central.request('operator', agent.id, 'streams', { action: 'rename', streamId: stream.id, title: ' ' }), /refused/);
   await f.central.request('operator', agent.id, 'messages', { action: 'mark-read', streamId: stream.id });
   const updated = await f.central.projectDashboard('operator', 'central-project'); assert.equal(updated.agents[0].streams.length, 1);
   await assert.rejects(f.central.request('operator', agent.id, 'streams', { action: 'create', projectId: f.other.id }), /refused/);
@@ -79,7 +85,11 @@ test('actual target Core accepts remote work once and delivers the persisted rep
   await f.central.request('operator', agent.id, 'messages', message); await harness.drained();
   assert.equal(runtime.sessions.get(`plugin:workspaces:${stream.id}`).prompts.length, 1);
   assert.equal(contexts.get(`plugin:workspaces:${stream.id}`).cwd, f.targetHome);
-  const response = await f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id });
+  // Terminal turn status is host telemetry persisted after the reply; wait (bounded) for its durable state.
+  const read = () => f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id });
+  let response = await read();
+  for (const deadline = Date.now() + 5000; response.phase === 'started' && Date.now() < deadline;) { await new Promise(resolve => setTimeout(resolve, 10)); response = await read(); }
+  assert.equal(response.phase, 'completed');
   assert.equal(response.messages.filter(message => message.role === 'assistant').length, 1);
   assert.equal(response.unread, true);
   assert.equal(harness.acquireUpdateAdmission(1000).status, 'admitted');
