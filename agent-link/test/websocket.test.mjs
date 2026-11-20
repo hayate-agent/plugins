@@ -55,6 +55,28 @@ test('outbound WSS works with no target listener, requires manual approval and k
   assert.doesNotMatch(JSON.stringify(f.client.status()), /credential|token/);
 });
 
+test('image-read crosses the outbound WSS relay in bounded chunks and is refused for other streams', async t => {
+  const f = await fixture(t); const { agent } = await register(f);
+  f.workspace.imageUploads = true;
+  const stream = await f.central.request('operator', agent.id, 'streams', { action: 'create', projectId: f.project.id, title: 'Pictures', idempotencyKey: randomUUID() });
+  // Real, decodable PNG (stored deflate blocks, random pixels) without extra dependencies.
+  const { deflateSync, crc32 } = await import('node:zlib'); const { randomBytes } = await import('node:crypto');
+  const chunkOf = (type, body) => { const head = Buffer.alloc(8); head.writeUInt32BE(body.length); head.write(type, 4); const tail = Buffer.alloc(4); tail.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), body]))); return Buffer.concat([head, body, tail]); };
+  const side = 250, rows = Buffer.concat(Array.from({ length: side }, () => Buffer.concat([Buffer.from([0]), randomBytes(side * 3)])));
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(side, 0); ihdr.writeUInt32BE(side, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunkOf('IHDR', ihdr), chunkOf('IDAT', deflateSync(rows, { level: 0 })), chunkOf('IEND', Buffer.alloc(0))]);
+  const uploadId = randomUUID(); let image;
+  for (let i = 0, offset = 0; offset < png.length; i++, offset += 30000) image = await f.central.request('operator', agent.id, 'messages', { action: 'media-chunk', streamId: stream.id, chunk: { uploadId, index: i, data: png.subarray(offset, offset + 30000).toString('base64'), mimeType: 'image/png', final: offset + 30000 >= png.length } });
+  const messageId = randomUUID();
+  await f.central.request('operator', agent.id, 'messages', { action: 'send', streamId: stream.id, id: messageId, text: 'a picture', attachments: [{ id: image.id }] });
+  const page = await f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id });
+  assert.deepEqual(page.messages.find(m => m.id === messageId).images, [{ mimeType: 'image/png', bytes: png.length }]);
+  const parts = []; let offset = 0;
+  for (;;) { const chunk = await f.central.request('operator', agent.id, 'messages', { action: 'image-read', streamId: stream.id, messageId, index: 0, offset }); parts.push(Buffer.from(chunk.data, 'base64')); offset = chunk.next; if (chunk.done) break; }
+  assert.ok(parts.length >= 2); assert.equal(Buffer.concat(parts).compare(png), 0);
+  await assert.rejects(f.central.request('operator', agent.id, 'messages', { action: 'image-read', streamId: stream.id, messageId: 'nope', index: 0, offset: 0 }), /refused/i);
+});
+
 test('TLS verification, one-use invitation and operator scope are enforced', async t => {
   const f = await fixture(t); const invite = await f.relay.invite('operator', { name: 'Scoped', capabilities: ['activity'] });
   const invalid = new OutboundAgentLink({ home: path.join(f.home, 'untrusted'), agent: 'Untrusted', workspace: f.workspace, credentials: f.targetVault, config: { projects: {}, capabilities: ['activity'], allowOperatorRelays: true } }); await invalid.open();
