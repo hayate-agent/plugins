@@ -1,6 +1,6 @@
 {
-  "contentDigest": "bec0a261f59225df17a3350961e206257bfe3d2fba67305c45f574d9e2fa7171",
-  "coreSHA": "a18a11f81592848ee0e798d30ea94dfd9570f6f2",
+  "contentDigest": "506e8f59f5cdde284d4e2aa6d685219748ec2f875e83f05ca9408c92239e8b2c",
+  "coreSHA": "348a16fdd0df391a193c35500678ad86bc08018f",
   "files": [
     {
       "mode": "100644",
@@ -120,7 +120,7 @@
     {
       "mode": "100644",
       "path": "agent-link/test/websocket.test.mjs",
-      "sha256": "fdfd9dea713caeabf1c1ce42699a8bc7985dd43883a090eee6f4769ac378b978"
+      "sha256": "942a2f8d15eee7466f8f934372e5944c8e11c964a743abf6791970e812471ae2"
     },
     {
       "mode": "100644",
@@ -140,7 +140,7 @@
     {
       "mode": "100644",
       "path": "agent-link/workspace-protocol.mjs",
-      "sha256": "d92b13e3a6d9aaeb35d195cc7ebc8766a7a37e3d14acd56057956f0cda8a7569"
+      "sha256": "a6afdf7bbab05a0c97b288bbf98c0639fabcb84f6577b38a0a4f65c98e0a2f48"
     },
     {
       "mode": "100644",
@@ -249,6 +249,11 @@
     },
     {
       "mode": "100644",
+      "path": "dashboard-api/test/image-read.test.mjs",
+      "sha256": "a0888f0754e41e7d4ff9bb9fbcae724256af2d60fed7fc8da15f547acf0eb644"
+    },
+    {
+      "mode": "100644",
       "path": "dashboard-api/test/lifecycle.test.mjs",
       "sha256": "21b3f84a25bae88ec0300b2e1d6b19ec42e883f1ad1df2437d20cf3d89824a9f"
     },
@@ -290,7 +295,7 @@
     {
       "mode": "100644",
       "path": "dashboard-api/workspace-http.mjs",
-      "sha256": "ef213fab8c1b98cd787b5ef1f8a65bc34e2de2e003d6b0af4a56ab591b83e2b0"
+      "sha256": "880702db47ab07c77bbe09288b31e7ee1e10123c73ee8fb8772062eeb3a6e0a3"
     },
     {
       "mode": "100644",
@@ -1090,7 +1095,7 @@
     {
       "mode": "100644",
       "path": "workspace/service.mjs",
-      "sha256": "b146a57c3c8a33f465ff84e37d9f91f2c25c706fa527743bd1ef3bd8eb01064f"
+      "sha256": "3b3af4feb0d1bf003b7387c4a1a3004429e1cfd4995d6a8a344d92bd1a080812"
     },
     {
       "mode": "100644",
@@ -1101,6 +1106,11 @@
       "mode": "100644",
       "path": "workspace/test/host.mjs",
       "sha256": "f5a71e0368f27254d453ed6947263456c8ed3c7d51698fa92d018a27a87ea0a1"
+    },
+    {
+      "mode": "100644",
+      "path": "workspace/test/image-read.test.mjs",
+      "sha256": "7e718dd7097a5d815792369db8a43a32881b000890e0422da4a8a7450cc8e13b"
     },
     {
       "mode": "100644",
@@ -1120,5 +1130,5 @@
   ],
   "historyPolicy": "fresh snapshot; no private source ancestry or author metadata",
   "schema": 1,
-  "sourceSHA": "a7ed21a16f2cbd312eac14a67b3a7692b2f4c6cf"
+  "sourceSHA": "96187bf490cef210484ccb19e40b17732f3d5a05"
 }

@@ -50,6 +50,7 @@ export async function workspaceRequest(workspace, config, owner, capability, inp
     // stream-delta-v1 fallback. Workspace streams publish no delta log yet, so a
     // client always resynchronizes by loading one bounded page (never a replay).
     if (input.action === 'changes') return workspace.changes ? workspace.changes(owner, input.streamId, { since: input.since, epoch: typeof input.epoch === 'string' ? input.epoch : undefined }) : { epoch: null, session: input.streamId, seq: 0, reset: true, events: [] };
+    if (input.action === 'image-read') return workspace.imageChunk ? workspace.imageChunk(owner, input.streamId, typeof input.messageId === 'string' ? input.messageId : '', input.index, input.offset ?? 0) : (() => { throw deny(); })();
     if (input.action === 'media-chunk') return workspace.uploadMedia(owner, input.streamId, input.chunk);
     if (input.action === 'mark-read') { await workspace.update(owner, 'stream', input.streamId, { read: true }); return { read: true }; }
     if (input.action === 'send') return workspace.submit(owner, input.streamId, { id: input.id, text: input.text, ...(input.attachments ? { attachments: input.attachments } : {}) });

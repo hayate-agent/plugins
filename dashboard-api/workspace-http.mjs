@@ -2,7 +2,7 @@ import { describeAgentFailure } from './relay-errors.mjs';
 /** HTTP projection only. Projects, files, secrets and agent registration belong
  * to independently installed backend plugins, never to the WebUI data store. */
 export function validateAgentRead(capability, input) {
-  const allowed = { projects: ['list', 'resolve'], streams: ['list', 'fork-eligibility'], messages: ['read', 'submission-status', 'changes'], activity: ['list'] };
+  const allowed = { projects: ['list', 'resolve'], streams: ['list', 'fork-eligibility'], messages: ['read', 'submission-status', 'changes', 'image-read'], activity: ['list'] };
   if (!input || typeof input !== 'object' || Array.isArray(input) || !allowed[capability]?.includes(input.action)) {
     if (!(capability === 'messages' && input?.action === 'pi-chats' && ['list', 'preview'].includes(input.operation))) throw Object.assign(Error('Read-only agent operation required'), { status: 405 });
   }

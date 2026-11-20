@@ -1,7 +1,9 @@
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, writeFile, open } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { createMediaStore, validatePromptImages } from './media.mjs';
+import { createMediaStore, validatePromptImages, inspectImage, MAX_IMAGE_BYTES } from './media.mjs';
+const IMAGE_CHUNK_BYTES = 60000;
+const attachmentType = name => ({ png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' })[/\.(png|jpeg|webp)$/.exec(name ?? '')?.[1]];
 import { verifyDecodedImage } from './media-decode.mjs';
 import path from 'node:path';
 import { Store } from '../shared/store.mjs';
@@ -85,7 +87,8 @@ export class Workspace {
     const { messages = [], ...rest } = this.stream(principal, streamId);
     let end = messages.length;
     if (before !== undefined) { end = messages.findIndex(message => message.id === before); if (end < 0) end = 0; }
-    const clip = message => message;
+    // Image bytes never travel in a page: the client sees what exists and fetches one block on demand.
+    const clip = message => message.attachments?.length ? { ...message, images: message.attachments.map(item => ({ mimeType: attachmentType(item.name), bytes: item.size })) } : message;
     const slice = [];
     let bytes = 0;
     for (let i = end - 1; i >= 0 && slice.length < limit; i--) {
@@ -97,6 +100,30 @@ export class Workspace {
     const more = first > 0;
     if (before !== undefined) return { messages: slice, before: more ? slice[0]?.id ?? null : null, historyTruncated: more, immutable: true };
     return { ...rest, messages: slice, before: more ? slice[0]?.id ?? null : null, historyTruncated: more, busy: !!rest.activity, stream: this.events.head(streamId) };
+  }
+  /** Bounded read of one stored image: at most IMAGE_CHUNK_BYTES per call, owner-scoped, signature-checked. */
+  async imageChunk(principal, streamId, messageId, index, offset = 0) {
+    const message = this.#stream(this.store.read(), principal, streamId).messages?.find(item => item.id === messageId);
+    const item = Number.isSafeInteger(index) && index >= 0 ? message?.attachments?.[index] : undefined;
+    const mimeType = item && attachmentType(item.name);
+    if (!item || !mimeType || !/^[a-f0-9]{64}$/.test(item.sha256) || item.sessionKey !== `plugin:workspaces:${streamId}`) throw Object.assign(Error('Image not found'), { status: 404 });
+    if (!Number.isSafeInteger(item.size) || item.size < 1 || item.size > MAX_IMAGE_BYTES) throw Object.assign(Error('Image exceeds 5 MiB'), { status: 413 });
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset >= item.size) throw Object.assign(Error('Invalid image offset'), { status: 400 });
+    const file = path.join(this.attachmentRoot, createHash('sha256').update(item.sessionKey).digest('hex'), item.sha256);
+    let handle;
+    try { handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
+    catch { throw Object.assign(Error('Image not found'), { status: 404 }); }
+    try {
+      const info = await handle.stat();
+      if (!info.isFile() || info.size !== item.size) throw Object.assign(Error('Image not found'), { status: 404 });
+      const head = Buffer.alloc(12); await handle.read(head, 0, 12, 0);
+      try { inspectImage(head.subarray(0, Math.min(12, item.size)), mimeType); } catch { throw Object.assign(Error('Image not found'), { status: 404 }); }
+      const length = Math.min(IMAGE_CHUNK_BYTES, item.size - offset), buffer = Buffer.alloc(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, offset);
+      if (bytesRead !== length) throw Object.assign(Error('Image not found'), { status: 404 });
+      const next = offset + length;
+      return { mimeType, size: item.size, offset, data: buffer.toString('base64'), done: next >= item.size, next };
+    } finally { await handle.close(); }
   }
   changes(principal, streamId, { since, epoch } = {}) { this.#stream(this.store.read(), principal, streamId); return this.events.since(streamId, since, { epoch }); }
   subscribe(listener) { if (this.#stopping) throw Error('Workspace stopping'); this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
