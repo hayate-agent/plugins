@@ -6,6 +6,7 @@ import { verifyDecodedImage } from './media-decode.mjs';
 import path from 'node:path';
 import { Store } from '../shared/store.mjs';
 import { Files } from './files.mjs';
+import { createEventLog, createTextCoalescer } from './event-log.mjs';
 const id = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(value);
 const title = value => { if (typeof value !== 'string' || !value.trim() || value.length > 160) throw Error('A title of 1–160 characters is required'); return value.trim(); };
 const actor = value => { if (typeof value !== 'string' || !value || value.length > 200 || ['__proto__', 'constructor', 'prototype'].includes(value)) throw Error('Authenticated workspace principal required'); return value; };
@@ -21,8 +22,9 @@ const settings = value => {
 
 /** Transport-independent project domain. Owns no browser, HTTP listener or second agent runtime. */
 export class Workspace {
-  #deliver; #live = new Map(); #pending = new Set(); #stopping = false; #listeners = new Set(); #notification; #transports = new Map();
+  #deliver; #live = new Map(); #pending = new Set(); #stopping = false; #listeners = new Set(); #notification; #transports = new Map(); #deltas;
   constructor({ home, cwd, roots = [cwd], executionContexts, agent = 'Hayate' }) {
+    this.events = createEventLog(); this.#deltas = createTextCoalescer(this.events);
     this.media = createMediaStore(); this.attachmentRoot = path.join(home, 'attachments');
     this.agent = agent; this.contexts = executionContexts; this.cwd = cwd;
     this.store = new Store(path.join(home, 'workspace/state.json'), { version: 1, projects: [], streams: [], settings: {} });
@@ -30,6 +32,13 @@ export class Workspace {
     this.store.subscribe(() => this.#publish());
   }
   #publish() { for (const listener of this.#listeners) try { listener(); } catch { /* projection failure never affects durable state */ } }
+  #emitMessage(streamId, entry) {
+    // Mirrors the PI connector: a bounded `entry.appended`; an oversized message
+    // becomes a reset so clients reload one bounded page instead of missing it.
+    // Full content or a reset; never a silently shortened message.
+    try { this.#deltas.event(streamId, 'entry.appended', { message: entry }); }
+    catch { try { this.events.append(streamId, 'history.reset', { reason: 'oversized' }); } catch { /* next page repairs */ } }
+  }
   #activityChanged() {
     if (this.#stopping || this.#notification) return;
     this.#notification = setTimeout(() => { this.#notification = undefined; this.#publish(); }, 60);
@@ -69,6 +78,27 @@ export class Workspace {
     const { owner, receipts, ...stream } = this.#stream(this.store.read(), principal, streamId);
     return { ...stream, ...this.#external(stream), unread: stream.completed > (stream.read ?? 0), activity: stream.legacy ? this.#external(stream).activity ?? null : this.#live.get(streamId) ?? null };
   }
+  /** One bounded page of a stream, newest first cursor: `before` is the id of the oldest
+   * message already held by the client. Same shape as the PI connector's page so one
+   * browser code path serves both: `{ messages, before, historyTruncated, stream }`. */
+  page(principal, streamId, { before, limit = 40 } = {}) {
+    const { messages = [], ...rest } = this.stream(principal, streamId);
+    let end = messages.length;
+    if (before !== undefined) { end = messages.findIndex(message => message.id === before); if (end < 0) end = 0; }
+    const clip = message => message;
+    const slice = [];
+    let bytes = 0;
+    for (let i = end - 1; i >= 0 && slice.length < limit; i--) {
+      const message = clip(messages[i]), size = Buffer.byteLength(JSON.stringify(message));
+      if (slice.length && bytes + size > 180000) break; // the first (newest) message is always delivered complete
+      bytes += size; slice.unshift(message);
+    }
+    const first = slice.length ? messages.findIndex(message => message.id === slice[0].id) : end;
+    const more = first > 0;
+    if (before !== undefined) return { messages: slice, before: more ? slice[0]?.id ?? null : null, historyTruncated: more, immutable: true };
+    return { ...rest, messages: slice, before: more ? slice[0]?.id ?? null : null, historyTruncated: more, busy: !!rest.activity, stream: this.events.head(streamId) };
+  }
+  changes(principal, streamId, { since, epoch } = {}) { this.#stream(this.store.read(), principal, streamId); return this.events.since(streamId, since, { epoch }); }
   subscribe(listener) { if (this.#stopping) throw Error('Workspace stopping'); this.#listeners.add(listener); return () => this.#listeners.delete(listener); }
   async createProject(principal, input) {
     actor(principal);
@@ -175,7 +205,11 @@ export class Workspace {
       stream.lastTurn = taskId; stream.completed++; stream.phase = phase; stream.updatedAt = Date.now();
     });
   }
-  externalChanged() { this.#publish(); }
+  externalChanged() {
+    // Legacy transcripts have no delta source: tell streaming clients to reload their page.
+    for (const stream of this.store.read().streams) if (stream.legacy && this.events.tracked(stream.id)) { try { this.events.append(stream.id, 'history.reset', { reason: 'external' }); } catch { /* next page repairs */ } }
+    this.#publish();
+  }
   async update(principal, kind, objectId, patch) {
     if (!['project', 'stream', 'global'].includes(kind)) throw Error('Unknown settings scope');
     if (kind === 'global') {
@@ -270,13 +304,16 @@ export class Workspace {
     const input = { session: streamId, target: streamId, sender: principal, id: `${streamId}:${message.id}`, text: message.text.trim(), ...(attachments.length ? { attachments } : {}),
       turn: Object.fromEntries(Object.entries({ model, thinking, instructions }).filter(([, value]) => value !== undefined)) };
     const work = (async () => {
+      let created;
       const turn = await this.store.change(next => {
+        created = undefined;
         const current = this.#stream(next, principal, streamId);
         const existing = current.messages.find(m => m.id === message.id);
         if (existing && (existing.role !== 'user' || existing.text !== input.text || JSON.stringify(existing.attachments ?? []) !== JSON.stringify(attachments))) throw Error('Message identity conflict');
-        if (!existing) { current.updatedAt = Date.now(); current.messages.push({ id: message.id, role: 'user', text: input.text, uploadRefs, ...(attachments.length ? { attachments } : {}), turn: input.turn, accepted: false, at: current.updatedAt }); }
+        if (!existing) { current.updatedAt = Date.now(); created = { id: message.id, role: 'user', text: input.text, at: current.updatedAt }; current.messages.push({ id: message.id, role: 'user', text: input.text, uploadRefs, ...(attachments.length ? { attachments } : {}), turn: input.turn, accepted: false, at: current.updatedAt }); }
         return structuredClone(existing?.turn ?? input.turn);
       });
+      if (created) this.#emitMessage(streamId, created); // after the durable commit
       if (this.#stopping) throw Error('Workspace stopping; retry the same message');
       // Selection is captured once from operator-owned settings. The host
       // validates turn overrides and retains authority/approval/tool policy.
@@ -294,28 +331,34 @@ export class Workspace {
     name: 'workspaces',
     start: async deliver => { this.#stopping = false; this.#deliver = deliver; },
     send: async (to, text, meta = {}) => {
+      let appended;
       await this.store.change(data => {
+        appended = undefined;
         const stream = data.streams.find(s => s.id === to.target); if (!stream) throw Error('Workspace stream not found');
         if (meta.deliveryId && stream.receipts.includes(meta.deliveryId)) return;
         if (meta.deliveryId) stream.receipts.push(meta.deliveryId);
-        stream.messages.push({ id: randomUUID(), role: 'assistant', text, at: Date.now(), outcome: meta.outcome, progress: meta.presentation === 'progress' });
+        const entry = { id: randomUUID(), role: 'assistant', text, at: Date.now(), outcome: meta.outcome, progress: meta.presentation === 'progress' };
+        stream.messages.push(entry);
         stream.updatedAt = Date.now();
+        appended = entry;
       });
-      if (meta.presentation !== 'progress' && !meta.approvalId) this.#live.delete(to.target);
+      if (appended) this.#emitMessage(to.target, appended);
+      if (meta.presentation !== 'progress' && !meta.approvalId) { this.#live.delete(to.target); this.#deltas.event(to.target, 'turn.status', { busy: false }); }
     },
     turnEvent: (to, event) => {
       const activity = this.#live.get(to.target) ?? { text: '', tools: {}, completed: 0, failed: 0, startedAt: Date.now() };
-      if (event.type === 'text') activity.text += event.delta;
+      if (event.type === 'text') { activity.text += event.delta; this.#deltas.text(to.target, event.delta); }
       if (event.type === 'tool') {
         const key = String(event.name); if (['__proto__', 'constructor', 'prototype'].includes(key)) return;
         activity.tools[key] = Math.max(0, (activity.tools[key] ?? 0) + (event.phase === 'start' ? 1 : -1));
+        try { this.#deltas.event(to.target, 'tool.status', { id: String(event.id ?? key).slice(0, 200), name: key.slice(0, 200), status: event.phase === 'start' ? 'running' : event.error ? 'failed' : 'done' }); } catch { /* repaired by the next page */ }
         if (event.phase === 'end') { activity.completed++; if (event.error) activity.failed++; }
       }
       this.#live.set(to.target, activity);
       this.#activityChanged();
     },
     typing: async (to, on) => {
-      if (on && !this.#live.has(to.target)) this.#live.set(to.target, { text: '', tools: {}, completed: 0, failed: 0, startedAt: Date.now() });
+      if (on && !this.#live.has(to.target)) { this.#live.set(to.target, { text: '', tools: {}, completed: 0, failed: 0, startedAt: Date.now() }); this.#deltas.event(to.target, 'turn.status', { busy: true }); }
       if (!on && !this.#live.get(to.target)?.text) this.#live.delete(to.target);
       this.#activityChanged();
     },
@@ -328,7 +371,7 @@ export class Workspace {
         }
       });
     },
-    stop: async () => { this.#stopping = true; this.#deliver = undefined; clearTimeout(this.#notification); this.#notification = undefined; await Promise.allSettled([...this.#pending]); this.#live.clear(); },
+    stop: async () => { this.#deltas.stop(); this.#stopping = true; this.#deliver = undefined; clearTimeout(this.#notification); this.#notification = undefined; await Promise.allSettled([...this.#pending]); this.#live.clear(); },
   };
   async stop() { await this.channel.stop(); await this.store.stop(); this.#listeners.clear(); }
 }

@@ -1,5 +1,5 @@
 {
-  "contentDigest": "7a61055f468aad34923601dc279b6762204ae9ce54095031fe2ff44d0a4d4ec1",
+  "contentDigest": "bec0a261f59225df17a3350961e206257bfe3d2fba67305c45f574d9e2fa7171",
   "coreSHA": "e88af3fbaddf08dfd02ca2aba0548e514419fa10",
   "files": [
     {
@@ -120,7 +120,7 @@
     {
       "mode": "100644",
       "path": "agent-link/test/websocket.test.mjs",
-      "sha256": "5610ae9807dd798426b800b2c0a4246596fe65b65b04e0b3e03d2481e10d8051"
+      "sha256": "fdfd9dea713caeabf1c1ce42699a8bc7985dd43883a090eee6f4769ac378b978"
     },
     {
       "mode": "100644",
@@ -130,17 +130,17 @@
     {
       "mode": "100644",
       "path": "agent-link/websocket-client.mjs",
-      "sha256": "1e7205a448ca17c0b728e0c55a8cedd08211c785390f11fb41c096f979997d66"
+      "sha256": "e4a61aa36bf14583bee8a3f6280d284c278db972994535955040a48eaf7132fc"
     },
     {
       "mode": "100644",
       "path": "agent-link/websocket-relay.mjs",
-      "sha256": "c38e7e4843ef382d2bbfd1791f2cbd4a22098cc8c7b92c9860b88079005b1e46"
+      "sha256": "fd539ce7e1f7ec4e9896921be3836e2af7ea8e6500c3da4ca3ac946dc186405a"
     },
     {
       "mode": "100644",
       "path": "agent-link/workspace-protocol.mjs",
-      "sha256": "672d34941d419806529ae20ed8ba6a4423b43d22dcbf6f4ce3928dc12fc53551"
+      "sha256": "d92b13e3a6d9aaeb35d195cc7ebc8766a7a37e3d14acd56057956f0cda8a7569"
     },
     {
       "mode": "100644",
@@ -300,7 +300,7 @@
     {
       "mode": "100644",
       "path": "docs/agent-link-websocket.md",
-      "sha256": "5c036c5d24e7afe6dd8ef3baeea145e70151ed2dfae87658a948330374efae5b"
+      "sha256": "7fc8c4a51eeffb99c50741caca1f244c1e7aa861dfc9999fd49bd90255028ab0"
     },
     {
       "mode": "100644",
@@ -1054,6 +1054,11 @@
     },
     {
       "mode": "100644",
+      "path": "workspace/event-log.mjs",
+      "sha256": "7e1f95065e76e1c5c0692278d669d9b34763992243b8b98bcceb20f397d424cf"
+    },
+    {
+      "mode": "100644",
       "path": "workspace/files.mjs",
       "sha256": "4b36692d256a0ff6a9016fe15133c31201a210b734ef01e07363bc16fe9df383"
     },
@@ -1085,7 +1090,7 @@
     {
       "mode": "100644",
       "path": "workspace/service.mjs",
-      "sha256": "82b58159666564b16b034815fade8f29744edd9a66f177c6f4fd08eafffad5b2"
+      "sha256": "b146a57c3c8a33f465ff84e37d9f91f2c25c706fa527743bd1ef3bd8eb01064f"
     },
     {
       "mode": "100644",
@@ -1115,5 +1120,5 @@
   ],
   "historyPolicy": "fresh snapshot; no private source ancestry or author metadata",
   "schema": 1,
-  "sourceSHA": "c35e47c46426d2786952558f7f8a8491760a6725"
+  "sourceSHA": "a7ed21a16f2cbd312eac14a67b3a7692b2f4c6cf"
 }

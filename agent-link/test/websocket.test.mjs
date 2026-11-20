@@ -45,8 +45,8 @@ test('outbound WSS works with no target listener, requires manual approval and k
   await f.central.request('operator', agent.id, 'messages', { action: 'send', streamId: stream.id, id: randomUUID(), text: 'Use outbound channel' });
   const result = await f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id });
   assert.equal(result.messages.at(-1).text, 'Remote answer'); assert.equal(f.received.length, 1);
-  // Over the real protocol, the stream-delta fallback resolves to a bounded page reload.
-  const changes = await f.central.request('operator', agent.id, 'messages', { action: 'changes', streamId: stream.id, since: 3 });
+  // A cursor beyond the retained window resolves to a bounded page reload.
+  const changes = await f.central.request('operator', agent.id, 'messages', { action: 'changes', streamId: stream.id, since: 999 });
   assert.equal(changes.reset, true); assert.deepEqual(changes.events, []); assert.equal(f.received.length, 1, 'changes never resubmits work');
   assert.equal(f.bindings.get(`plugin:workspaces:${stream.id}`).cwd, f.targetHome);
   assert.equal(f.relay.list('other').length, 0);
@@ -140,4 +140,79 @@ test('regular server pings keep idle channels live without productive ownership'
   assert.equal(f.client.status().connected, true);
   assert.equal(f.relay.list('operator')[0].connected, true);
   assert.equal(f.client.status().activeRequests, 0);
+});
+
+test('Hayate agents stream seq events over outbound WSS like the PI connector, and repair via changes', async t => {
+  const f = await fixture(t); const { agent } = await register(f);
+  const events = []; const stop = f.relay.subscribe('operator', event => { if (event.type === 'event') events.push(event.envelope); });
+  t.after(stop);
+  const stream = await f.central.request('operator', agent.id, 'streams', { action: 'create', projectId: f.project.id, title: 'Streaming', idempotencyKey: randomUUID() });
+  const before = await f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id });
+  assert.ok(before.stream?.epoch && before.stream.seq === 0, 'a read page carries the stream head');
+  await f.central.request('operator', agent.id, 'messages', { action: 'send', streamId: stream.id, id: randomUUID(), text: 'Stream me' });
+  await wait(() => events.some(e => e.kind === 'entry.appended' && e.data.message.role === 'assistant'));
+  assert.deepEqual(events.map(e => e.seq), events.map((_, i) => i + 1), 'contiguous per-session seq');
+  assert.ok(events.every(e => e.session === stream.id && e.epoch === before.stream.epoch && e.v === 1));
+  assert.equal(events[0].data.message.role, 'user');
+  // `changes` returns exactly the missing events; an unknown epoch resets.
+  const repair = await f.central.request('operator', agent.id, 'messages', { action: 'changes', streamId: stream.id, since: 1, epoch: before.stream.epoch });
+  assert.deepEqual(repair.events.map(e => e.seq), events.slice(1).map(e => e.seq));
+  const stale = await f.central.request('operator', agent.id, 'messages', { action: 'changes', streamId: stream.id, since: 1, epoch: 'other' });
+  assert.equal(stale.reset, true);
+  // Streams outside the shared project never leak into the event feed.
+  const hidden = await f.workspace.createStream('operator', { projectId: f.other.id, title: 'Hidden' });
+  const count = events.length; f.workspace.events.append(hidden.id, 'turn.status', { busy: true });
+  await new Promise(resolve => setTimeout(resolve, 150)); assert.equal(events.length, count);
+});
+
+test('read pages are bounded and paginate with an immutable before cursor', async t => {
+  const f = await fixture(t); const { agent } = await register(f);
+  const stream = await f.central.request('operator', agent.id, 'streams', { action: 'create', projectId: f.project.id, title: 'Long', idempotencyKey: randomUUID() });
+  await f.workspace.store.change(data => { const s = data.streams.find(x => x.id === stream.id); for (let i = 0; i < 100; i++) s.messages.push({ id: randomUUID(), role: i % 2 ? 'assistant' : 'user', text: 'm' + i, at: i + 1 }); });
+  const newest = await f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id });
+  assert.equal(newest.messages.length, 40); assert.equal(newest.messages.at(-1).text, 'm99'); assert.equal(newest.historyTruncated, true);
+  const older = await f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id, before: newest.before });
+  assert.equal(older.messages.at(-1).text, 'm59'); assert.equal(older.immutable, true);
+  const oldest = await f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id, before: older.before });
+  assert.equal(oldest.messages.length, 20); assert.equal(oldest.historyTruncated, false); assert.equal(oldest.before, null);
+});
+
+test('long messages are delivered complete (page and live event), repair answers are byte-bounded, legacy changes reset', async t => {
+  const f = await fixture(t); const { agent } = await register(f);
+  const events = []; t.after(f.relay.subscribe('operator', event => { if (event.type === 'event') events.push(event.envelope); }));
+  const stream = await f.central.request('operator', agent.id, 'streams', { action: 'create', projectId: f.project.id, title: 'Long text', idempotencyKey: randomUUID() });
+  const long = 'x'.repeat(30000) + 'END';
+  await f.central.request('operator', agent.id, 'messages', { action: 'send', streamId: stream.id, id: randomUUID(), text: long });
+  await wait(() => events.some(e => e.kind === 'entry.appended' && e.data.message.role === 'user'));
+  assert.equal(events.find(e => e.data.message?.role === 'user').data.message.text, long, 'live event carries the full text');
+  const page = await f.central.request('operator', agent.id, 'messages', { action: 'read', streamId: stream.id });
+  assert.equal(page.messages.find(m => m.role === 'user').text, long, 'page carries the full text');
+  for (let i = 0; i < 20; i++) f.workspace.events.append(stream.id, 'text.delta', { delta: 'y'.repeat(30000) });
+  const repair = await f.central.request('operator', agent.id, 'messages', { action: 'changes', streamId: stream.id, since: 0, epoch: page.stream.epoch });
+  assert.ok(JSON.stringify(repair).length < 200000 && repair.more === true, 'bounded repair answer continues with more');
+  assert.equal(repair.seq, repair.events.at(-1).seq, 'a truncated answer continues from its last returned event');
+  // Following the cursor page by page yields every event exactly once, in order.
+  const seen = []; let cursor = 0, pages = 0, result;
+  do { result = await f.central.request('operator', agent.id, 'messages', { action: 'changes', streamId: stream.id, since: cursor, epoch: page.stream.epoch }); seen.push(...result.events.map(e => e.seq)); cursor = result.events.at(-1)?.seq ?? cursor; pages++; } while (result.more && pages < 20);
+  assert.ok(pages > 1, 'needed more than one page');
+  assert.deepEqual(seen, Array.from({ length: seen.length }, (_, i) => i + 1), 'no event skipped or repeated across pages');
+  assert.equal(seen.at(-1), f.workspace.events.head(stream.id).seq);
+});
+
+test('event streaming needs the messages capability on both the grant and the target configuration', async t => {
+  for (const mode of ['grant', 'config']) {
+    const f = await fixture(t, {}, mode === 'config' ? {} : {});
+    let subscriptions = 0; const original = f.workspace.events.subscribe;
+    f.workspace.events.subscribe = listener => { subscriptions++; const stop = original(listener); return () => { subscriptions--; stop(); }; };
+    const restricted = mode === 'grant' ? ['projects', 'streams', 'activity'] : CAPABILITIES;
+    if (mode === 'config') { await f.client.stop(); }
+    const client = mode === 'config' ? new OutboundAgentLink({ home: path.join(f.home, 'restricted'), agent: 'Restricted', workspace: f.workspace, credentials: f.targetVault, config: { projects: { 'central-project': f.project.id }, capabilities: ['projects', 'streams', 'activity'], relays: [{ origin: f.origin, caFile: f.config.certFile }] }, reconnectMinMs: 50, reconnectMaxMs: 100 }) : f.client;
+    if (mode === 'config') { await client.open(); t.after(() => client.stop()); }
+    const invite = await f.relay.invite('operator', { name: 'Restricted ' + mode, capabilities: restricted.filter(c => CAPABILITIES.includes(c)) });
+    const connection = await client.enroll(f.origin, invite.code);
+    await wait(() => client.status().connected && f.relay.list('operator')[0]?.connected);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(subscriptions, 0, `${mode}: a connection without messages never subscribes to workspace events`);
+    assert.ok(connection.capabilities.length > 0);
+  }
 });
