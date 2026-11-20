@@ -74,7 +74,7 @@ export class OutboundAgentLink {
       await this.credentials.withSecret('operator', connection.credential, token => {
         if (this.#closing || this.#blocked) return;
         const socket = new WebSocket(connection.endpoint.replace(/^https:/, 'wss:') + '/api/agent-link/v1/connect', 'hayate.agent-link.v1', {
-          headers: { Authorization: 'Bearer ' + token, 'X-Hayate-Agent-ID': connection.id }, ca, handshakeTimeout: 10000,
+          headers: { Authorization: 'Bearer ' + token, 'X-Hayate-Agent-ID': connection.id, ...(typeof this.workspace.events?.subscribe === 'function' && connection.capabilities.includes('messages') && this.config.capabilities.includes('messages') ? { 'X-Hayate-Agent-Features': 'stream-delta-v1' } : {}) }, ca, handshakeTimeout: 10000,
           maxPayload: 262144, perMessageDeflate: false, followRedirects: false,
         });
         this.#socket = socket;
@@ -84,7 +84,22 @@ export class OutboundAgentLink {
           this.#heartbeat = setTimeout(() => { if (this.#socket === socket) socket.terminate(); }, this.heartbeatTimeoutMs);
           this.#heartbeat.unref?.();
         };
-        socket.on('open', () => { if (this.#closing || this.#socket !== socket) { socket.terminate(); return; } this.#delay = this.minDelay; this.#seen.clear(); heartbeat(); });
+        // stream-delta-v1: pushed only after the relay acknowledged the feature on this
+        // socket (older relays never send `features` and keep polling `changes`). An event
+        // that cannot be delivered becomes an invalidation (`changed`), never a silent drop.
+        let streaming = false, unsubscribe;
+        const forward = envelope => {
+          // Events carry message text and tool activity: same grant as a `messages` request.
+          if (!streaming || this.#socket !== socket || socket.readyState !== 1 || !connection.capabilities.includes('messages') || !this.config.capabilities.includes('messages')) return;
+          // Same target-owned scope as `workspaceRequest`: only streams of shared projects.
+          const allowed = new Set(Object.values(this.config.projects ?? {})); if (this.config.shareStandalone === true) allowed.add(null);
+          try { if (!allowed.has(this.workspace.stream('operator', envelope.session).projectId)) return; } catch { return; }
+          const text = JSON.stringify({ type: 'event', envelope });
+          if (Buffer.byteLength(text) > 70000 || socket.bufferedAmount >= 500000) { if (socket.readyState === 1) socket.send(JSON.stringify({ type: 'changed', revision: String(Date.now()) })); return; }
+          socket.send(text);
+        };
+        socket.on('open', () => { if (this.#closing || this.#socket !== socket) { socket.terminate(); return; } this.#delay = this.minDelay; this.#seen.clear(); heartbeat(); if (connection.capabilities.includes('messages') && this.config.capabilities.includes('messages')) unsubscribe = this.workspace.events?.subscribe?.(forward); });
+        socket.once('close', () => unsubscribe?.());
         // Server pings are required liveness evidence. TCP can remain half-open
         // after a NAT/proxy failure; reconnect the channel, never replay work.
         socket.on('ping', heartbeat);
@@ -96,6 +111,7 @@ export class OutboundAgentLink {
           let frame;
           try {
             frame = JSON.parse(bytes.toString('utf8'));
+            if (frame.type === 'features') { streaming = connection.capabilities.includes('messages') && this.config.capabilities.includes('messages') && Array.isArray(frame.features) && frame.features.includes('stream-delta-v1'); if (streaming) socket.send(JSON.stringify({ type: 'changed', revision: String(Date.now()) })); return; }
             if (frame.type !== 'request' || !UUID.test(frame.id) || this.#seen.has(frame.id) || this.#active.has(frame.id) || !connection.capabilities.includes(frame.capability) || !this.config.capabilities.includes(frame.capability) || !frame.input || typeof frame.input !== 'object') throw Error();
             if (frame.capability === 'streams' && frame.input.action === 'create' && !UUID.test(frame.input.idempotencyKey)) throw Error();
           } catch { socket.close(1008, 'Invalid scoped request'); return; }

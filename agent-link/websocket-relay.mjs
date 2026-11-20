@@ -158,7 +158,10 @@ export class AgentRelay {
             const frame = JSON.parse(bytes.toString('utf8')), pending = this.#pending.get(frame.id);
             if (frame.type === 'changed' && frame.revision && typeof frame.revision === 'string' && frame.revision.length <= 128) {
               const agent = this.#client(id, token);
-              if (!agent?.approved) throw refused();
+              if (!agent) throw refused();
+              // Unapproved agents may be connected and stream-capable; their invalidations
+              // carry no authority and are ignored until an operator approves them.
+              if (!agent.approved) return;
               this.#changed(agent.owner); return;
             }
             if (frame.type === 'event') {

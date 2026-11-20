@@ -78,6 +78,33 @@ origins without enumerating them; the default is the explicit relay allowlist.
 Startup changes use the agent's normal configuration owner and fresh update
 admission. Installing the overlay alone does not enable either side.
 
+## Live streaming and paging (same protocol as the PI connector)
+
+A Hayate target speaks exactly the protocol of the PI connector (`webui/pi-adapter`),
+so the dashboard has one code path for both:
+
+- **Events over the socket.** The client advertises `X-Hayate-Agent-Features: stream-delta-v1`.
+  Only after the relay answers `{type:"features"}` does the target push
+  `{type:"event", envelope:{v:1, epoch, session, seq, kind, data}}` frames
+  (`entry.appended`, `text.delta`, `tool.status`, `turn.status`, `history.reset`).
+  `seq` is contiguous per stream inside one `epoch`; the relay fans events out to the
+  owner's browsers. Events are only emitted for streams of shared projects.
+  An event over 70000 bytes or a congested socket is replaced by a `changed`
+  invalidation, never dropped silently.
+- **Repair.** `messages` action `changes` (`since`, `epoch`) returns the missing events
+  from the bounded in-memory window, or `{reset:true}` when the gap or epoch is gone;
+  the browser then reloads one bounded page. The window is disposable, the workspace
+  store stays the source of truth.
+- **Bounded pages.** `messages` action `read` returns the newest page (40 messages, about 180 kB)
+  with `before`, `historyTruncated` and `stream:{epoch,seq}` (a single oversized message is still delivered complete); `before:<id>` returns an
+  older page marked `immutable` (HTTP-cacheable on the dashboard).
+- **Commands.** Browser commands (`send`, ...) carry an `opId` and are acknowledged on the
+  dashboard's socket; they use the same ledger as the POST fallback. `submission-status`
+  answers `accepted` or `unknown` for an outcome that was not acknowledged; an unknown
+  outcome is queried, never replayed.
+- **Fallback.** Old relays that never send `features` keep working: the dashboard falls
+  back to `changes` GET and POST. Targets without the feature are polled as before.
+
 ## Manual enrollment and approval
 
 1. Centrally: **Agents → Invite outbound agent**. Choose a name and get a masked,
