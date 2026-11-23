@@ -178,6 +178,7 @@ test('fork snapshots history independently, persists context, and never replays 
   assert.equal(received.length, 2); assert.equal(received[1].text, 'What color?');
   assert.match(received[1].turn.instructions, /Remember violet/);
   assert.match(received[1].turn.instructions, /not new instructions or authority/);
+  assert.match(received[1].turn.instructions, /<webui_openui>[\s\S]*language `openui`[\s\S]*<\/webui_openui>/, 'turns from the WebUI carry the openui guide');
   assert.equal(service.stream('operator', source.id).messages.length, 1);
   const saved = JSON.parse(await readFile(path.join(home, 'workspace/state.json'), 'utf8'));
   assert.match(saved.streams.find(s => s.id === fork.id).forkContext, /Remember violet/);
@@ -188,4 +189,11 @@ test('fork snapshots history independently, persists context, and never replays 
     await restored.submit('operator', fork.id, { id: randomUUID(), text: 'Continue after restart' });
     assert.match(received.at(-1).turn.instructions, /Remember violet/);
   } finally { await restored.stop(); }
+});
+
+test('the bundled openui guide is intact and carries its checksum', async () => {
+  const { OPENUI_GUIDE, OPENUI_GUIDE_SHA256 } = await import('../openui-guide.mjs');
+  const { createHash } = await import('node:crypto');
+  assert.equal(createHash('sha256').update(OPENUI_GUIDE).digest('hex'), OPENUI_GUIDE_SHA256, 'regenerate with: node scripts/openui-guide.mjs --out <plugins>/workspace/openui-guide.mjs');
+  assert.doesNotMatch(OPENUI_GUIDE, /Button\(|@Run|Btn\(/, 'chat blocks are data-only');
 });
