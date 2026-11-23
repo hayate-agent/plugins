@@ -116,7 +116,9 @@ export function createCommandLedger({ file, skewMs = 60_000, maxEntries = 4096, 
    if (state !== 'ready') return { ok: false, status: 503, executed: false, error: 'Operation ledger unavailable; nothing was executed' };
    const issued = parseInt(OP_ID.exec(opId)[1], 36);
    const key = JSON.stringify([principal, opId]);
-   const fingerprint = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+   let fingerprint;
+   try { fingerprint = createHash('sha256').update(JSON.stringify(payload)).digest('hex'); }
+   catch { return { ok: false, status: 400, executed: false, error: 'Serializable command payload required' }; }
    prune();
    const known = entries.get(key);
    if (!known && (issued > now() + skewMs || issued <= now() - (ttlMs - skewMs))) return { ok: false, status: 409, executed: false, error: 'Operation identifier expired or clock skewed; nothing was executed. Reconcile, then issue a new opId' };

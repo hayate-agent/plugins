@@ -84,7 +84,10 @@ export class WebSockets {
       }).catch(() => { socket.close(1011, 'Event delivery failed'); }).finally(() => { row.pending--; });
     });
     socket.on('close', () => {
-      if (!row.reconnectMs || row.closed) this.connections.delete(row.id);
+      if (!row.reconnectMs || row.closed) {
+        row.controller?.abort();
+        this.connections.delete(row.id);
+      }
     });
   }
   async listen(owner, { host = '127.0.0.1', port = 0, token, profile, binding } = {}) {

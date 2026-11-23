@@ -4,12 +4,15 @@ import { randomUUID } from 'node:crypto';
 
 /** One host-owned instance. Subscribers are projections, never part of the commit. */
 export class Store {
-  #data; #serial = Promise.resolve(); #listeners = new Set(); #closed = false;
-  constructor(file, initial) { this.file = file; this.#data = structuredClone(initial); }
+  #data; #initial; #serial = Promise.resolve(); #listeners = new Set(); #closed = false;
+  constructor(file, initial) { this.file = file; this.#data = structuredClone(initial); this.#initial = structuredClone(initial); }
+  #validate(data) {
+    if (!data || data.version !== 1 || Object.entries(this.#initial).some(([key, initial]) => !Object.hasOwn(data, key) || typeof data[key] !== typeof initial || Array.isArray(data[key]) !== Array.isArray(initial) || (initial !== null && typeof initial === 'object' && data[key] === null))) throw Error('Invalid or unsupported plugin store');
+  }
   async load() {
     try {
       const data = JSON.parse(await readFile(this.file, 'utf8'));
-      if (!data || data.version !== 1 || Object.entries(this.#data).some(([key, initial]) => !Object.hasOwn(data, key) || typeof data[key] !== typeof initial || Array.isArray(data[key]) !== Array.isArray(initial) || (initial !== null && typeof initial === 'object' && data[key] === null))) throw Error('Invalid or unsupported plugin store');
+      this.#validate(data);
       this.#data = data;
     }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -20,19 +23,25 @@ export class Store {
     if (this.#closed) return Promise.reject(Error('Workspace stopping'));
     const work = this.#serial.then(async () => {
       const data = structuredClone(this.#data);
-      const result = await mutator(data);
+      const result = structuredClone(await mutator(data));
+      const serialized = JSON.stringify(structuredClone(data));
+      const committed = JSON.parse(serialized);
+      this.#validate(committed);
       const directory = path.dirname(this.file);
       await mkdir(directory, { recursive: true, mode: 0o700 });
       const temp = `${this.file}.${randomUUID()}.tmp`;
       try {
         const fd = await open(temp, 'wx', 0o600);
-        try { await fd.writeFile(JSON.stringify(data)); await fd.sync(); } finally { await fd.close(); }
+        try { await fd.writeFile(serialized); await fd.sync(); } finally { await fd.close(); }
         await rename(temp, this.file);
         const parent = await open(directory, 'r'); try { await parent.sync(); } finally { await parent.close(); }
       } finally { await rm(temp, { force: true }); }
-      this.#data = data;
-      for (const listener of this.#listeners) try { listener(); } catch { /* committed data wins */ }
-      return structuredClone(result);
+      this.#data = committed;
+      for (const listener of [...this.#listeners]) {
+        if (!this.#listeners.has(listener)) continue;
+        try { listener(); } catch { /* committed data wins */ }
+      }
+      return result;
     });
     this.#serial = work.catch(() => {});
     return work;

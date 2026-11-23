@@ -32,9 +32,10 @@ export class AgentHub {
   issueCode(owner, input) { return this.#owned(() => this.#issueCode(owner, input)); }
   async #issueCode(owner, { name, capabilities }) {
     if (!owner || typeof name !== 'string' || !name.trim() || !Array.isArray(capabilities) || capabilities.some(c => !['projects', 'streams', 'messages', 'activity'].includes(c))) throw Error('Invalid pairing scope');
+    const scope = [...new Set(capabilities)];
     const code = randomBytes(24).toString('base64url'); const expiresAt = Date.now() + this.pairingLifetimeMs;
-    await this.store.change(data => { data.codes = data.codes.filter(c => c.expiresAt > Date.now()); data.codes.push({ owner, digest: hash(code), name, capabilities: [...new Set(capabilities)], expiresAt }); });
-    return { code, expiresAt, capabilities: [...new Set(capabilities)] };
+    await this.store.change(data => { data.codes = data.codes.filter(c => c.expiresAt > Date.now()); data.codes.push({ owner, digest: hash(code), name, capabilities: scope, expiresAt }); });
+    return { code, expiresAt, capabilities: [...scope] };
   }
   consumeCode(code) { return this.#owned(() => this.#consumeCode(code)); }
   async #consumeCode(code) {
@@ -67,6 +68,7 @@ export class AgentHub {
     try {
       // Adapter owns transport trust, TLS and pairing protocol.
       paired = await adapter.pair({ endpoint, code, owner });
+      paired = structuredClone(paired);
       if (!paired || typeof paired.token !== 'string' || !paired.token || !Array.isArray(paired.capabilities) || paired.capabilities.some(c => !['projects', 'streams', 'messages', 'activity'].includes(c)) || !label(paired.agent)) throw Error('Invalid adapter pairing response');
       const id = randomUUID();
       credential = await this.credentials.put(owner, { kind: 'peer', label: `Agent ${name.trim()}`, value: paired.token });
@@ -99,7 +101,13 @@ export class AgentHub {
     const adapter = this.#adapters.get(agent.adapter);
     if (!adapter) return Promise.reject(Error('The configured adapter is not installed'));
     // No automatic retry: a disconnected productive request has unknown outcome.
-    return this.#owned(() => this.credentials.withSecret(owner, agent.credential, token => adapter.request({ endpoint: agent.endpoint, token, capability, input, signal })));
+    return this.#owned(async () => {
+      signal?.throwIfAborted();
+      return this.credentials.withSecret(owner, agent.credential, token => {
+        signal?.throwIfAborted();
+        return adapter.request({ endpoint: agent.endpoint, token, capability, input, signal });
+      });
+    });
   }
   check(owner, id) { return this.#owned(async () => {
     const agent = this.list(owner).find(agent => agent.id === id); if (!agent) throw Error('Agent not found');

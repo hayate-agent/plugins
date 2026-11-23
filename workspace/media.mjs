@@ -34,7 +34,7 @@ export function createMediaStore({ now = Date.now, ttlMs = 10 * 60 * 1000, maxBy
  return {
   chunk(scope, { uploadId, index, data, mimeType, final = false }) {
    sweep(); prunePending();
-   if (typeof scope !== 'string' || !scope || typeof uploadId !== 'string' || !/^[a-f0-9-]{36}$/.test(uploadId) || !Number.isSafeInteger(index) || index < 0 || typeof data !== 'string' || data.length > 64000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw Error('Invalid upload chunk');
+   if (typeof scope !== 'string' || !scope || typeof uploadId !== 'string' || !/^[a-f0-9-]{36}$/.test(uploadId) || !Number.isSafeInteger(index) || index < 0 || typeof final !== 'boolean' || typeof data !== 'string' || data.length > 64000 || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) throw Error('Invalid upload chunk');
    const bytes = Buffer.from(data, 'base64');
    if (!bytes.length || index >= 128) throw Error('Empty upload chunk or chunk count limit reached');
    if (bytes.toString('base64') !== data) throw Error('Invalid upload encoding');
@@ -44,7 +44,7 @@ export function createMediaStore({ now = Date.now, ttlMs = 10 * 60 * 1000, maxBy
     if (index !== 0 || pending.size >= maxPending || [...pending.values()].filter(upload => upload.scope === scope).length >= 4) throw Error('Upload unavailable or capacity reached');
     item = { scope, mimeType, chunks: [], size: 0, expires: now() + ttlMs }; pending.set(uploadId, item);
    }
-   if (item.scope !== scope || item.mimeType !== mimeType || item.chunks.length !== index || typeof final !== 'boolean') throw Error('Upload scope or sequence mismatch');
+   if (item.scope !== scope || item.mimeType !== mimeType || item.chunks.length !== index) throw Error('Upload scope or sequence mismatch');
    if (item.size + bytes.length > MAX_IMAGE_BYTES || used + [...pending.values()].reduce((sum, upload) => sum + upload.size, 0) + bytes.length > maxBytes) { pending.delete(uploadId); throw Error('Image exceeds 5 MiB'); }
    item.chunks.push(bytes); item.size += bytes.length;
    if (!final) return { uploadId, next: index + 1 };

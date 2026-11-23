@@ -78,6 +78,7 @@ export class OpenBaoVault {
     return method === 'GET' ? (await response.json()).data.data : undefined;
   }
   async put(owner, input) {
+    input = structuredClone(input);
     const id = input.id ?? randomUUID();
     if (typeof input.label !== 'string' || typeof input.value !== 'string' || !input.value) throw Error('Invalid credential');
     await this.request(owner, id, 'POST', input);

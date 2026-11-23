@@ -17,9 +17,12 @@ export class Identity {
   #sessions = new Map(); #limits = new Map(); #inflight = 0; #closed = false; #changes = Promise.resolve(); #sessionChanges = Promise.resolve(); #persist; #persistSessions;
   constructor({ username, password, sessionLifetimeMs = 3600000, now = Date.now, persist, sessions = [], persistSessions }) {
     if (typeof username !== 'string' || !username || username.length > 100 || password?.algorithm !== 'scrypt-v1' || !/^[a-f0-9]{64}$/.test(password.salt) || !/^[a-f0-9]{128}$/.test(password.hash) || !Number.isSafeInteger(sessionLifetimeMs) || sessionLifetimeMs < 1000 || sessionLifetimeMs > 86400000) throw Error('Invalid identity configuration');
-    this.username = username; this.password = password; this.lifetime = sessionLifetimeMs; this.now = now; this.#persist = persist; this.#persistSessions = persistSessions;
+    this.username = username; this.password = { ...password }; this.lifetime = sessionLifetimeMs; this.now = now; this.#persist = persist; this.#persistSessions = persistSessions;
     if (!Array.isArray(sessions) || sessions.length > 256) throw Error('Invalid persisted sessions');
+    const seen = new Set();
     for (const entry of sessions) {
+      if (seen.has(entry?.hash)) throw Error('Duplicate persisted session');
+      seen.add(entry?.hash);
       if (!/^[a-f0-9]{64}$/.test(entry?.hash) || entry.principal !== 'operator' || typeof entry.audience !== 'string' || !entry.audience.startsWith('https://') || !Number.isSafeInteger(entry.expiresAt)) throw Error('Invalid persisted session');
       if (entry.expiresAt > now()) { const { hash, ...session } = entry; this.#sessions.set(hash, session); }
     }
