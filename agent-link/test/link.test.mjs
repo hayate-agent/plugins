@@ -35,6 +35,16 @@ test('two headless instances pair over verified TLS, scope projects, exchange wo
   assert.deepEqual(renamed.messages, conversation.messages);
   assert.equal(f.received.length, 1, 'Rename does not execute work');
   await assert.rejects(f.central.request('operator', agent.id, 'streams', { action: 'rename', streamId: stream.id, title: ' ' }), /refused/);
+  // Archive / delete / restore: flags only, history and running work stay untouched; garbage is refused.
+  const archivedState = await f.central.request('operator', agent.id, 'streams', { action: 'lifecycle', streamId: stream.id, archived: true });
+  assert.deepEqual(archivedState, { archived: true, deleted: false });
+  assert.equal(f.workspace.stream('operator', stream.id).archived, true);
+  assert.equal(f.workspace.stream('operator', stream.id).messages.length, conversation.messages.length, 'history is kept');
+  assert.deepEqual(await f.central.request('operator', agent.id, 'streams', { action: 'lifecycle', streamId: stream.id, archived: false, deleted: true }), { archived: false, deleted: true });
+  assert.deepEqual(await f.central.request('operator', agent.id, 'streams', { action: 'lifecycle', streamId: stream.id, deleted: false }), { archived: false, deleted: false });
+  await assert.rejects(f.central.request('operator', agent.id, 'streams', { action: 'lifecycle', streamId: stream.id }), /refused/);
+  await assert.rejects(f.central.request('operator', agent.id, 'streams', { action: 'lifecycle', streamId: stream.id, deleted: 'yes' }), /refused/);
+  assert.equal(f.received.length, 1, 'Lifecycle does not execute work');
   await f.central.request('operator', agent.id, 'messages', { action: 'mark-read', streamId: stream.id });
   const updated = await f.central.projectDashboard('operator', 'central-project'); assert.equal(updated.agents[0].streams.length, 1);
   await assert.rejects(f.central.request('operator', agent.id, 'streams', { action: 'create', projectId: f.other.id }), /refused/);
