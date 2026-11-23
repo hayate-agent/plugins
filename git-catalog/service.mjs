@@ -30,12 +30,12 @@ export class GitCatalog {
     return { entries: data.map(value => ({ id: String(value.id), name: String(value.login ?? value.username ?? '') })).filter(v => v.name), page, hasMore: data.length === 50 };
   }
   async repositories(owner, providerId, organization, page = 1) {
-    if (!Number.isSafeInteger(page) || page < 1 || (organization !== undefined && !/^[a-zA-Z0-9_.-]+$/.test(organization))) throw Error('Invalid organization/page');
+    if (!Number.isSafeInteger(page) || page < 1 || (organization !== undefined && (organization === '.' || organization === '..' || !/^[a-zA-Z0-9_.-]+$/.test(organization)))) throw Error('Invalid organization/page');
     const route = organization ? `/orgs/${encodeURIComponent(organization)}/repos` : '/user/repos';
     const { provider, data } = await this.#get(owner, providerId, `${route}?page=${page}&limit=50&per_page=50`);
     return { entries: data.map(value => ({ id: String(value.id), name: String(value.full_name ?? ''), private: value.private === true,
       // Checkout mappings are installation-owned. A remote repository name is
       // never silently treated as a local path or a permission to clone/execute.
-      directory: provider.checkouts?.[value.full_name] ?? null })).filter(v => v.name), page, hasMore: data.length === 50 };
+      directory: provider.checkouts && Object.hasOwn(provider.checkouts, value.full_name) ? provider.checkouts[value.full_name] ?? null : null })).filter(v => v.name), page, hasMore: data.length === 50 };
   }
 }

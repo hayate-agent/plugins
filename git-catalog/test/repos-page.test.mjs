@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import plugin from '../index.mjs';
+test('repos command exposes organization and personal repository pagination', async t => {
+ const home = await mkdtemp(path.join(os.tmpdir(), 'catalog-repos-page-'));
+ t.after(() => rm(home, { recursive: true, force: true }));
+ await writeFile(path.join(home, 'git-catalog.json'), JSON.stringify({ providers: [{ id: 'fixture', kind: 'forgejo', origin: 'https://git.invalid' }] }));
+ const original = globalThis.fetch; t.after(() => { globalThis.fetch = original; });
+ const calls = []; let command, stop;
+ globalThis.fetch = async value => { const url = new URL(value); calls.push([url.pathname, url.searchParams.get('page')]); return { ok: true, json: async () => [] }; };
+ await plugin.activate({ home, foregroundWork: async fn => fn(), services: new Map(), onStop(fn) { stop = fn; }, registerService() {}, registerCommand(value) { command = value; } });
+ t.after(() => stop());
+ assert.equal(command.admin, true); assert.match(command.help, /organization\|-.*page/);
+ for (const args of ['repos fixture team 2', 'repos fixture - 3', 'repos fixture team', 'repos fixture']) await command.run(args);
+ assert.deepEqual(calls, [['/api/v1/orgs/team/repos', '2'], ['/api/v1/user/repos', '3'], ['/api/v1/orgs/team/repos', '1'], ['/api/v1/user/repos', '1']]);
+ for (const page of ['0', '-1', '1.5', 'bad', 'Infinity', '9007199254740992']) await assert.rejects(command.run(`repos fixture team ${page}`), /Invalid organization\/page/);
+ assert.equal(calls.length, 4);
+});

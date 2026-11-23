@@ -24,10 +24,11 @@ export function createEventLog({ maxEventsPerSession = 512, maxBytesPerSession =
     epoch,
     append(session, kind, data = {}) {
       if (typeof session !== 'string' || !session || typeof kind !== 'string') throw Error('Invalid stream event');
-      const entry = state(session);
-      const envelope = { v: 1, epoch: entry.epoch, session, seq: entry.seq + 1, kind, data };
+      const existing = sessions.get(session);
+      const envelope = { v: 1, epoch: existing?.epoch ?? `${epoch}.${generation + 1}`, session, seq: (existing?.seq ?? 0) + 1, kind, data };
       const size = Buffer.byteLength(JSON.stringify(envelope));
       if (size > MAX_EVENT_BYTES) throw Error('Stream event exceeds frame budget');
+      const entry = state(session);
       entry.seq = envelope.seq; entry.events.push({ envelope, size }); entry.bytes += size;
       while (entry.events.length > maxEventsPerSession || entry.bytes > maxBytesPerSession) entry.bytes -= entry.events.shift().size;
       for (const listener of listeners) { try { listener(envelope); } catch { /* A broken consumer never affects the producer. */ } }
@@ -68,7 +69,7 @@ export function createTextCoalescer(log, { flushMs = 50, maxChars = 16000, timer
     let text = pending.text;
     while (text) {
       let cut = Math.min(text.length, maxChars);
-      while (cut > 1 && JSON.stringify(text.slice(0, cut)).length > 48 * 1024) cut = Math.floor(cut / 2);
+      while (cut > 1 && Buffer.byteLength(JSON.stringify(text.slice(0, cut))) > 48 * 1024) cut = Math.floor(cut / 2);
       if (cut < text.length && /[\uD800-\uDBFF]/.test(text[cut - 1])) cut--;
       try { log.append(session, 'text.delta', { delta: text.slice(0, cut) }); } catch { /* clients repair from the durable entry */ }
       text = text.slice(Math.max(1, cut));

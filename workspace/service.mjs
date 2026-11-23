@@ -71,13 +71,22 @@ export class Workspace {
       features: this.imageUploads && !stream.legacy ? ['image-prompt-v1'] : [],
       updatedAt: stream.legacy ? this.#external(stream).updatedAt ?? stream.updatedAt : stream.updatedAt,
       unread: stream.completed > (stream.read ?? 0), activity: stream.legacy ? this.#external(stream).activity ?? null : this.#live.get(stream.id) ?? null }));
+    const summaries = new Map();
+    for (const stream of streams) {
+      let summary = summaries.get(stream.projectId);
+      if (!summary) { summary = { unread: false, active: 0 }; summaries.set(stream.projectId, summary); }
+      if (stream.unread && !stream.deleted) summary.unread = true;
+      if (stream.activity) summary.active++;
+    }
     const projects = data.projects.filter(p => p.owner === principal).map(({ owner, ...project }) => ({ ...project,
-      unread: streams.some(s => s.projectId === project.id && s.unread && !s.deleted),
-      active: streams.filter(s => s.projectId === project.id && s.activity).length }));
+      unread: summaries.get(project.id)?.unread ?? false,
+      active: summaries.get(project.id)?.active ?? 0 }));
     return { agent: this.agent, projects, streams, settings: Object.hasOwn(data.settings, principal) ? data.settings[principal] : {}, roots: this.files.roots() };
   }
   stream(principal, streamId) {
     const { owner, receipts, ...stream } = this.#stream(this.store.read(), principal, streamId);
+    // Image bytes never travel in a conversation: the browser sees what exists and fetches one block on demand.
+    if (Array.isArray(stream.messages)) stream.messages = stream.messages.map(message => message?.attachments?.length ? { ...message, images: message.attachments.map(item => ({ mimeType: attachmentType(item.name), bytes: item.size })) } : message);
     return { ...stream, ...this.#external(stream), unread: stream.completed > (stream.read ?? 0), activity: stream.legacy ? this.#external(stream).activity ?? null : this.#live.get(streamId) ?? null };
   }
   /** One bounded page of a stream, newest first cursor: `before` is the id of the oldest
@@ -195,12 +204,15 @@ export class Workspace {
     if (!this.contexts) throw Error('Host execution context required');
     await this.contexts.bind(`plugin:workspaces:${fork.id}`, { cwd: fork.cwd, directories: fork.directories });
     const selected = await this.store.change(next => {
-      this.#stream(next, principal, sourceId);
+      const current = this.#stream(next, principal, sourceId);
       const previous = next.streams.find(s => s.owner === principal && s.forkKey === input.idempotencyKey);
       if (previous) {
         if (previous.forkSource !== sourceId || previous.forkTitle !== label) throw Error('Fork identity conflict');
         return previous.id;
       }
+      // Context binding awaited: lifecycle may have changed before persistence.
+      if (current.deleted || current.archived) throw Error('Restore the chat before forking');
+      if (current.projectId) { const project = this.#project(next, principal, current.projectId); if (project.deleted || project.archived) throw Error('Restore the project before forking'); }
       next.streams.push(fork); return fork.id;
     });
     return this.stream(principal, selected);

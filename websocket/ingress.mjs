@@ -74,9 +74,11 @@ export function jsonHeartbeat(frame, context, { requestType = 'ping', responseTy
 export function ruleGate(rules, fallback) {
   return async (event, context, config) => {
     for (const rule of rules) {
+      context.signal?.throwIfAborted();
       const decision = await rule(event, context, config);
       if (decision != null) return decision;
     }
+    context.signal?.throwIfAborted();
     if (!fallback) throw Error('No routing rule matched');
     return fallback(event, context, config);
   };

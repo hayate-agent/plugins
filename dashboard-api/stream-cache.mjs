@@ -90,9 +90,14 @@ export function createStreamCache({ store = createMemoryCacheStore(), maxSession
    // agent that never reached this relay (that is why the client asks). Only a
    // cursor strictly inside the window is served; `more: true` makes the client
    // confirm the head with the agent in its next request.
-   if (!window || !Number.isSafeInteger(seq) || typeof epoch !== 'string' || epoch !== window.epoch || seq < window.first - 1 || seq >= window.last) { misses++; return undefined; }
+   if (!window || !Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(seq) || typeof epoch !== 'string' || epoch !== window.epoch || seq < window.first - 1 || seq >= window.last) { misses++; return undefined; }
    hits++;
-   const events = window.events.filter(item => item.envelope.seq > seq).slice(0, Math.max(1, Math.min(limit, 512))).map(item => item.envelope);
+   const events = [], count = Math.min(limit, 512);
+   for (const item of window.events) {
+    if (item.envelope.seq <= seq) continue;
+    events.push(item.envelope);
+    if (events.length >= count) break;
+   }
    return { epoch: window.epoch, session, seq: events.at(-1).seq, events, more: true, truncated: events.at(-1).seq < window.last, cached: true };
   },
   attach(source, principal, resolve = event => event) {

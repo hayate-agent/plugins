@@ -191,7 +191,12 @@ export class WorkspaceHTTP {
       if (!project) throw Object.assign(Error('Project not found'), { status: 404 });
       json(res, 200, { results: await this.service('agent-hub').syncProject(principal, { id: project.id, title: project.title, settings: project.settings }) }); return true;
     }
-    const match = /^\/(projects|streams)\/([^/]+)(?:\/(messages|convert|fork|media))?$/.exec(route);
+    const match = /^\/(projects|streams)\/([^/]+)(?:\/(messages|convert|fork|media|image))?$/.exec(route);
+    if (req.method === 'GET' && match?.[1] === 'streams' && match[3] === 'image') {
+      const index = Number(url.searchParams.get('index')), offset = Number(url.searchParams.get('offset') ?? 0), messageId = url.searchParams.get('message') ?? '';
+      if (!messageId || messageId.length > 200 || !Number.isInteger(index) || !Number.isInteger(offset)) throw Object.assign(Error('Invalid image request'), { status: 400 });
+      json(res, 200, await this.service('workspaces').imageChunk(principal, match[2], messageId, index, offset)); return true;
+    }
     if (req.method === 'GET' && match?.[1] === 'streams' && !match[3]) {
       json(res, 200, this.service('workspaces').stream(principal, match[2])); return true;
     }

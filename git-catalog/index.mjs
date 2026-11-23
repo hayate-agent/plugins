@@ -22,12 +22,12 @@ export default {
       repositories: (...args) => owned(() => catalog.repositories(...args)),
     });
     api.registerService('git-catalog', 1, service);
-    api.registerCommand({ name: 'git-catalog', admin: true, help: 'Read-only configured Git inventory: providers | orgs <provider> | repos <provider> [organization]', async run(args) {
-      const [op = 'providers', provider, organization] = args.trim().split(/\s+/);
+    api.registerCommand({ name: 'git-catalog', admin: true, help: 'Read-only configured Git inventory: providers | orgs <provider> [page] | repos <provider> [organization|-] [page]', async run(args) {
+      const [op = 'providers', provider, organization, page] = args.trim().split(/\s+/);
       if (op === 'providers') return JSON.stringify(service.list());
-      if (op === 'orgs') return JSON.stringify(await service.organizations('operator', provider));
-      if (op === 'repos') return JSON.stringify(await service.repositories('operator', provider, organization));
-      throw Error('Use providers | orgs <provider> | repos <provider> [organization]');
+      if (op === 'orgs') return JSON.stringify(await service.organizations('operator', provider, organization === undefined ? 1 : Number(organization)));
+      if (op === 'repos') return JSON.stringify(await service.repositories('operator', provider, organization === '-' ? undefined : organization, page === undefined ? 1 : Number(page)));
+      throw Error('Use providers | orgs <provider> [page] | repos <provider> [organization|-] [page]');
     } });
   },
 };

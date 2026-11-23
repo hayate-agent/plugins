@@ -9,6 +9,7 @@ export function loadDecoder(load = () => import('sharp')) {
 }
 
 export async function verifyDecodedImage(image) {
+ image = { ...image };
  const sharp = await loadDecoder();
  if (!sharp) throw Error('Image decoding is unavailable on this host');
  const bytes = Buffer.from(image.data, 'base64');

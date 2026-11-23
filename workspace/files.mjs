@@ -8,11 +8,12 @@ const inside = (base, candidate) => { const relative = path.relative(base, candi
 /** Server-side picker; roots are operator configuration, not arbitrary HTTP paths. */
 export class Files {
   #roots = [];
-  constructor(roots) { this.configured = roots; }
+  constructor(roots) { this.configured = Array.isArray(roots) ? [...roots] : roots; }
   async start() {
     if (!Array.isArray(this.configured) || !this.configured.length || this.configured.some(p => typeof p !== 'string' || !path.isAbsolute(p))) throw Error('Configure absolute workspace roots');
-    this.#roots = [...new Set(await Promise.all(this.configured.map(p => realpath(p))))];
-    for (const p of this.#roots) if (!(await stat(p)).isDirectory()) throw Error('Workspace root is not a directory');
+    const roots = [...new Set(await Promise.all(this.configured.map(p => realpath(p))))];
+    for (const p of roots) if (!(await stat(p)).isDirectory()) throw Error('Workspace root is not a directory');
+    this.#roots = roots;
   }
   roots() { return [...this.#roots]; }
   async resolve(value) {
