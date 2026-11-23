@@ -1,6 +1,6 @@
 {
-  "contentDigest": "f9a6694c9b1f45971961425b134f92c59978a8e91cdbd1681e9d064ca9a56db7",
-  "coreSHA": "1af76c4470ea857196491bfe6ca94924fdef0d13",
+  "contentDigest": "753fc9fcc073688a2a687e91c50f6ade6d9e822efe064fbae56de35998c9f448",
+  "coreSHA": "7315a4402d12e4d3a926e068d15e2fc5e1315361",
   "files": [
     {
       "mode": "100644",
@@ -1189,6 +1189,11 @@
     },
     {
       "mode": "100644",
+      "path": "workspace/openui-guide.mjs",
+      "sha256": "20a02fa1f30acf03ffd307da5e4d39786a40f49839650d02dff0fea4cf43ecf2"
+    },
+    {
+      "mode": "100644",
       "path": "workspace/package-lock.json",
       "sha256": "0a0f61fc6b4d74cbf4e0d53ab6379b64a5de0adf9c830532a7f2b222634b109b"
     },
@@ -1200,7 +1205,7 @@
     {
       "mode": "100644",
       "path": "workspace/service.mjs",
-      "sha256": "f2447e1af01d600a0a059559aef9643807fb43fd08508ca24c3e90bf4c8b29b3"
+      "sha256": "139631dfc5f15503b3460983ca520c4d216b1bd8dd0a1e7981deea861c9c3627"
     },
     {
       "mode": "100644",
@@ -1270,10 +1275,10 @@
     {
       "mode": "100644",
       "path": "workspace/test/workspace.test.mjs",
-      "sha256": "1dc66688df2ff36d248e93719ea45c31d69e48c5118ecc54aadd78aa06aff2e0"
+      "sha256": "01ee5480e98163ba944ed07153e696898d0a96816b95144b60d1fbe7ee77b5dd"
     }
   ],
   "historyPolicy": "fresh snapshot; no private source ancestry or author metadata",
   "schema": 1,
-  "sourceSHA": "0f3a4adb866c06589fa922078efa91a5113ca985"
+  "sourceSHA": "86d66c1056ca436bbd8ebeff4c4b1e29a9575a36"
 }
