@@ -1,5 +1,5 @@
 {
-  "contentDigest": "5a8eca12c739db1801784b478b069a56762a5f29e703866f5957a6efbe56c9ce",
+  "contentDigest": "f9a6694c9b1f45971961425b134f92c59978a8e91cdbd1681e9d064ca9a56db7",
   "coreSHA": "7a8ec95298347701575ab5f1c92456d3cdea1668",
   "files": [
     {
@@ -125,7 +125,7 @@
     {
       "mode": "100644",
       "path": "agent-link/test/link.test.mjs",
-      "sha256": "f8ef2c29eab3359e4f7b6b1c414ec6f48e2ab11ffb07f65c4feeb88d1810d003"
+      "sha256": "de8f06e233c37d80db0a28ea675884f07aa962d1c497aae9f472ced9d56d6962"
     },
     {
       "mode": "100644",
@@ -155,7 +155,7 @@
     {
       "mode": "100644",
       "path": "agent-link/workspace-protocol.mjs",
-      "sha256": "a6afdf7bbab05a0c97b288bbf98c0639fabcb84f6577b38a0a4f65c98e0a2f48"
+      "sha256": "d37990835d54ac1a9dc467b342f66c50242e0f341eee837700d9ab9249ef819a"
     },
     {
       "mode": "100644",
@@ -1275,5 +1275,5 @@
   ],
   "historyPolicy": "fresh snapshot; no private source ancestry or author metadata",
   "schema": 1,
-  "sourceSHA": "3823ee81af902985191726124fc2b335be6c41c2"
+  "sourceSHA": "0f3a4adb866c06589fa922078efa91a5113ca985"
 }

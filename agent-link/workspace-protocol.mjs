@@ -6,7 +6,7 @@ export async function workspaceRequest(workspace, config, owner, capability, inp
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw deny();
   const snapshot = workspace.snapshot(owner), allowed = new Set(Object.values(config.projects ?? {}));
   if (config.shareStandalone === true) allowed.add(null);
-  const features = ['read-markers', 'idempotent-stream-create', 'organize-streams', 'rename-streams', 'fork-streams', 'pi-live-v1', ...(config.shareStandalone === true ? ['standalone-chats'] : [])];
+  const features = ['read-markers', 'idempotent-stream-create', 'organize-streams', 'rename-streams', 'stream-lifecycle-v1', 'fork-streams', 'pi-live-v1', ...(config.shareStandalone === true ? ['standalone-chats'] : [])];
   const stream = id => { const value = workspace.stream(owner, id); if (!allowed.has(value.projectId)) throw deny(); return value; };
   if (capability === 'projects') {
     if (input.action === 'resolve') {
@@ -31,6 +31,16 @@ export async function workspaceRequest(workspace, config, owner, capability, inp
       stream(input.streamId);
       await workspace.update(owner, 'stream', input.streamId, { title: input.title });
       return workspace.stream(owner, input.streamId);
+    }
+    // Archive / delete (both recoverable: only flags, history stays) and restore. Booleans only, at least one.
+    if (input.action === 'lifecycle') {
+      stream(input.streamId);
+      const patch = {};
+      for (const key of ['archived', 'deleted']) if (input[key] !== undefined) { if (typeof input[key] !== 'boolean') throw deny(); patch[key] = input[key]; }
+      if (!Object.keys(patch).length) throw deny();
+      await workspace.update(owner, 'stream', input.streamId, patch);
+      const { archived, deleted } = workspace.stream(owner, input.streamId);
+      return { archived: archived === true, deleted: deleted === true };
     }
     if (input.action === 'move') {
       stream(input.streamId); if (!allowed.has(input.projectId)) throw deny();
