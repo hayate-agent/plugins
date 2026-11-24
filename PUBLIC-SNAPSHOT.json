@@ -1,5 +1,5 @@
 {
-  "contentDigest": "753fc9fcc073688a2a687e91c50f6ade6d9e822efe064fbae56de35998c9f448",
+  "contentDigest": "8fa313ed5d3384292b049b888013ddb426c1c95582de519a712bf6cb60ff667a",
   "coreSHA": "6d68bceab9b5e9e17b08919d5cc315d3aecf2453",
   "files": [
     {
@@ -210,12 +210,17 @@
     {
       "mode": "100644",
       "path": "dashboard-api/index.mjs",
-      "sha256": "f0f3de6669f358a73299e52359c5c0e68680ceb79c1b969b97aedf094a48a8c9"
+      "sha256": "2baaebe71f3a14f035a7dc32022ea61ee562566465f9ca5ff89499632e086bb2"
     },
     {
       "mode": "100644",
       "path": "dashboard-api/package.json",
       "sha256": "44eb8271f3a6e77697358a526b8d52b7edd20dafda4d5071d284ea89df747fe7"
+    },
+    {
+      "mode": "100644",
+      "path": "dashboard-api/preferences.mjs",
+      "sha256": "86cac60f055f40723cf1e3c5b6a627c4bfd4b9527e0063fb924c2e72aecd3705"
     },
     {
       "mode": "100644",
@@ -291,6 +296,11 @@
       "mode": "100644",
       "path": "dashboard-api/test/package-boundary.test.mjs",
       "sha256": "73c1f94ebdc00029992156d013232751f9632922ea5a92e31f8748ff51d44302"
+    },
+    {
+      "mode": "100644",
+      "path": "dashboard-api/test/preferences.test.mjs",
+      "sha256": "ed7b84b59997f7fcfc2848e4c6fa8aad332a570c68b4cdb8294b9d497ebb48cc"
     },
     {
       "mode": "100644",
@@ -1280,5 +1290,5 @@
   ],
   "historyPolicy": "fresh snapshot; no private source ancestry or author metadata",
   "schema": 1,
-  "sourceSHA": "86d66c1056ca436bbd8ebeff4c4b1e29a9575a36"
+  "sourceSHA": "9d5373e49a1194f78386ad782236aa92c49d293c"
 }
