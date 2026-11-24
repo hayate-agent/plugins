@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { defaults, readUI, loadModules, activateSettingsTool } from './ui.mjs';
 import { WorkspaceHTTP } from './workspace-http.mjs';
+import { Preferences } from './preferences.mjs';
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const fail = (status, message) => Object.assign(new Error(message), { status });
@@ -51,6 +52,7 @@ export class WebUIChannel {
   #uiError;
   #notifyTimer;
   #workspace;
+  #preferences;
   #legacyCleanup;
   #services;
   #localAgent;
@@ -65,6 +67,7 @@ export class WebUIChannel {
     this.home = home;
     this.agent = agent;
     this.file = path.join(home, 'webui', 'conversations.json');
+    this.#preferences = new Preferences(path.join(home, 'webui', 'preferences.json'));
   }
   get url() { return this.#origin; }
   async reloadTLS() {
@@ -161,6 +164,7 @@ export class WebUIChannel {
       try { for (const chat of this.#data.chats.filter(chat => chat.messages.length)) await backend.attachConversation('operator', { conversationId: chat.id, title: chat.title }); }
       catch (error) { this.#legacyCleanup(); this.#legacyCleanup = undefined; throw error; }
     }
+    await this.#preferences.load();
     this.#ui = await readUI(this.home);
     this.#modulePaths = JSON.stringify(this.#ui.modules ?? []);
     try { this.#modules = await loadModules(this.home, this.#ui); }
@@ -351,6 +355,11 @@ export class WebUIChannel {
     if (!url.pathname.startsWith('/api/')) throw fail(404, 'API route not found');
     const session = identity ? requireSession(identity, req, this.#origin) : null;
     const authorized = () => !identity || !!identity.authenticate(sessionToken(req), this.#origin);
+    if (url.pathname === '/api/preferences') {
+      if (req.method === 'GET') { this.#json(res, 200, this.#preferences.value); return; }
+      if (req.method === 'POST') { const patch = await this.#body(req); this.#json(res, 200, await this.#preferences.patch(patch)); return; }
+      throw fail(405, 'Method not allowed');
+    }
     if (await this.#workspace.handle({ req, res, url, principal: session?.principal ?? 'operator', authorized,
       body: async request => { const value = await this.#body(request); if (!authorized()) throw fail(401, 'Authentication required'); return value; },
       json: (response, status, data) => this.#json(response, status, data) })) return;
