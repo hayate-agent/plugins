@@ -48,4 +48,15 @@ test('HTTP and Agent-Link forks retain independent context with ownership and sh
   assert.equal(workspace.stream('operator', remote.id).messages.length, 3);
   assert.equal(delivered.length, 3);
   for (const turn of delivered.slice(1)) assert.match(JSON.stringify(turn), /Remember cobalt/);
+  // Fork from a chosen message through the same peer protocol the dashboards use.
+  const firstUser = workspace.stream('operator', source.id).messages.find(message => message.role === 'user');
+  const listed = await workspaceRequest(workspace, config, 'operator', 'streams', { action: 'list' });
+  assert.ok(listed.features.includes('fork-from-message-v1'), 'the agent announces the feature');
+  const partial = { action: 'fork', streamId: source.id, entryId: firstUser.id, idempotencyKey: randomUUID() };
+  const cut = await workspaceRequest(workspace, config, 'operator', 'streams', partial);
+  assert.equal(cut.text, 'Remember cobalt'); assert.deepEqual(cut.messages, [], 'the fork ends just before the first message');
+  assert.equal((await workspaceRequest(workspace, config, 'operator', 'streams', partial)).id, cut.id, 'a retry is the same fork');
+  await assert.rejects(workspaceRequest(workspace, {}, 'operator', 'streams', partial), /refused/, 'still needs an allowed workspace');
+  await assert.rejects(workspaceRequest(workspace, config, 'other', 'streams', { ...partial, idempotencyKey: randomUUID() }), /not found/, 'another operator cannot fork it');
+  assert.equal(workspace.stream('operator', source.id).messages.length, 2, 'the original keeps its messages');
 });
