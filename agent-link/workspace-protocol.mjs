@@ -6,7 +6,7 @@ export async function workspaceRequest(workspace, config, owner, capability, inp
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw deny();
   const snapshot = workspace.snapshot(owner), allowed = new Set(Object.values(config.projects ?? {}));
   if (config.shareStandalone === true) allowed.add(null);
-  const features = ['read-markers', 'idempotent-stream-create', 'organize-streams', 'rename-streams', 'stream-lifecycle-v1', 'fork-streams', 'pi-live-v1', ...(config.shareStandalone === true ? ['standalone-chats'] : [])];
+  const features = ['read-markers', 'idempotent-stream-create', 'organize-streams', 'rename-streams', 'stream-lifecycle-v1', 'fork-streams', 'fork-from-message-v1', 'pi-live-v1', ...(config.shareStandalone === true ? ['standalone-chats'] : [])];
   const stream = id => { const value = workspace.stream(owner, id); if (!allowed.has(value.projectId)) throw deny(); return value; };
   if (capability === 'projects') {
     if (input.action === 'resolve') {
@@ -25,7 +25,7 @@ export async function workspaceRequest(workspace, config, owner, capability, inp
     if (input.action === 'list') return { features, streams: snapshot.streams.filter(value => allowed.has(value.projectId) && (input.projectId === undefined || value.projectId === input.projectId)) };
     if (input.action === 'fork') {
       stream(input.streamId);
-      return workspace.forkStream(owner, input.streamId, { idempotencyKey: input.idempotencyKey, title: input.title });
+      return workspace.forkStream(owner, input.streamId, { idempotencyKey: input.idempotencyKey, title: input.title, ...(input.entryId !== undefined ? { entryId: input.entryId } : {}) });
     }
     if (input.action === 'rename') {
       stream(input.streamId);

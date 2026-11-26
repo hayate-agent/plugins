@@ -1,6 +1,6 @@
 {
-  "contentDigest": "8fa313ed5d3384292b049b888013ddb426c1c95582de519a712bf6cb60ff667a",
-  "coreSHA": "ae119aeb2ca1ab5304549df64825051303d64b09",
+  "contentDigest": "ea4a60fcee476f1deb1315fac82ef8bc580b38b2dcb63cca3349ac6473c8ba48",
+  "coreSHA": "f98ef8e41ee96bdb41991169825f7b1d5798a18f",
   "files": [
     {
       "mode": "100644",
@@ -155,7 +155,7 @@
     {
       "mode": "100644",
       "path": "agent-link/workspace-protocol.mjs",
-      "sha256": "d37990835d54ac1a9dc467b342f66c50242e0f341eee837700d9ab9249ef819a"
+      "sha256": "b1af151c4640cb631d1f70673dbbec95ccb465a497a2044d972ede21bcc019ba"
     },
     {
       "mode": "100644",
@@ -1215,12 +1215,12 @@
     {
       "mode": "100644",
       "path": "workspace/service.mjs",
-      "sha256": "139631dfc5f15503b3460983ca520c4d216b1bd8dd0a1e7981deea861c9c3627"
+      "sha256": "a54f2186095e2b9afcbcf71a6e25bb617de12b4f1dba43b8ceca9cd9f1ad45b3"
     },
     {
       "mode": "100644",
       "path": "workspace/test/chat-actions.test.mjs",
-      "sha256": "885bd23cccf560069364a7d5cfa00c2e5953d2a601c664ab276e94524ae379f6"
+      "sha256": "cea7db46c91b7138023efb7a1408a71fdb30debaaffe6c2b9daa648375de29e4"
     },
     {
       "mode": "100644",
@@ -1285,10 +1285,10 @@
     {
       "mode": "100644",
       "path": "workspace/test/workspace.test.mjs",
-      "sha256": "01ee5480e98163ba944ed07153e696898d0a96816b95144b60d1fbe7ee77b5dd"
+      "sha256": "4a664eb9efd044f829a70cbb938b3e2bec41f576947cced0010b1d5bebcc6cd1"
     }
   ],
   "historyPolicy": "fresh snapshot; no private source ancestry or author metadata",
   "schema": 1,
-  "sourceSHA": "9d5373e49a1194f78386ad782236aa92c49d293c"
+  "sourceSHA": "f47c5fd6b4a5e2f3f98794518ae372515e4ef5fa"
 }

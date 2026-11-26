@@ -68,7 +68,7 @@ export class Workspace {
   }
   snapshot(principal) {
     actor(principal); const data = this.store.read();
-    const streams = data.streams.filter(s => s.owner === principal).map(({ messages, receipts, owner, forkContext, ...stream }) => ({ ...stream,
+    const streams = data.streams.filter(s => s.owner === principal).map(({ messages, receipts, owner, forkContext, forkText, ...stream }) => ({ ...stream,
       features: this.imageUploads && !stream.legacy ? ['image-prompt-v1'] : [],
       updatedAt: stream.legacy ? this.#external(stream).updatedAt ?? stream.updatedAt : stream.updatedAt,
       unread: stream.completed > (stream.read ?? 0), activity: stream.legacy ? this.#external(stream).activity ?? null : this.#live.get(stream.id) ?? null }));
@@ -85,7 +85,7 @@ export class Workspace {
     return { agent: this.agent, projects, streams, settings: Object.hasOwn(data.settings, principal) ? data.settings[principal] : {}, roots: this.files.roots() };
   }
   stream(principal, streamId) {
-    const { owner, receipts, ...stream } = this.#stream(this.store.read(), principal, streamId);
+    const { owner, receipts, forkText, ...stream } = this.#stream(this.store.read(), principal, streamId);
     // Image bytes never travel in a conversation: the browser sees what exists and fetches one block on demand.
     if (Array.isArray(stream.messages)) stream.messages = stream.messages.map(message => message?.attachments?.length ? { ...message, images: message.attachments.map(item => ({ mimeType: attachmentType(item.name), bytes: item.size })) } : message);
     return { ...stream, ...this.#external(stream), unread: stream.completed > (stream.read ?? 0), activity: stream.legacy ? this.#external(stream).activity ?? null : this.#live.get(streamId) ?? null };
@@ -187,28 +187,38 @@ export class Workspace {
     // A retry without an explicit title retains the original generated title,
     // even if the source has since been renamed.
     const label = title(input.title ?? previous?.forkTitle ?? `${source.title.slice(0, 150)} (fork)`);
+    // Optional: fork from just before one of the operator's own messages. The identity of a retry includes it.
+    const fromMessage = input.entryId;
+    if (fromMessage !== undefined && (typeof fromMessage !== 'string' || !fromMessage || fromMessage.length > 200)) throw Error('Invalid message to fork from');
     if (previous) {
-      if (previous.forkSource !== sourceId || previous.forkTitle !== label) throw Error('Fork identity conflict');
-      return this.stream(principal, previous.id);
+      if (previous.forkSource !== sourceId || previous.forkTitle !== label || previous.forkFrom !== fromMessage) throw Error('Fork identity conflict');
+      return { ...this.stream(principal, previous.id), ...(fromMessage !== undefined ? { text: previous.forkText ?? '' } : {}) };
     }
     if (source.deleted || source.archived) throw Error('Restore the chat before forking');
     if (source.projectId) { const project = this.#project(data, principal, source.projectId); if (project.deleted || project.archived) throw Error('Restore the project before forking'); }
     const conversation = this.stream(principal, sourceId);
     if (conversation.unavailable) throw Error('Source conversation unavailable');
-    const messages = structuredClone(conversation.messages ?? []);
+    let messages = structuredClone(conversation.messages ?? []), selectedText;
+    if (fromMessage !== undefined) {
+      const index = messages.findIndex(message => message.id === fromMessage);
+      if (index < 0) throw Error('That message is not part of this chat any more');
+      if (messages[index].role !== 'user') throw Error('Only your own messages can be forked from');
+      selectedText = messages[index].text ?? '';
+      messages = messages.slice(0, index);
+    }
     const context = JSON.stringify(messages.map(({ role, text }) => ({ role, text })));
     if (Buffer.byteLength(context, 'utf8') > 120_000) throw Error('Conversation is too large to fork without losing context');
     const fork = { id: randomUUID(), owner: principal, projectId: source.projectId,
       title: label, cwd: source.cwd, directories: source.directories, settings: structuredClone(source.settings),
       completed: 0, read: 0, messages, receipts: [], forkContext: context,
-      forkSource: sourceId, forkTitle: label, forkKey: input.idempotencyKey, createdAt: Date.now(), updatedAt: Date.now() };
+      forkSource: sourceId, forkTitle: label, forkKey: input.idempotencyKey, ...(fromMessage !== undefined ? { forkFrom: fromMessage, forkText: selectedText } : {}), createdAt: Date.now(), updatedAt: Date.now() };
     if (!this.contexts) throw Error('Host execution context required');
     await this.contexts.bind(`plugin:workspaces:${fork.id}`, { cwd: fork.cwd, directories: fork.directories });
     const selected = await this.store.change(next => {
       const current = this.#stream(next, principal, sourceId);
       const previous = next.streams.find(s => s.owner === principal && s.forkKey === input.idempotencyKey);
       if (previous) {
-        if (previous.forkSource !== sourceId || previous.forkTitle !== label) throw Error('Fork identity conflict');
+        if (previous.forkSource !== sourceId || previous.forkTitle !== label || previous.forkFrom !== fromMessage) throw Error('Fork identity conflict');
         return previous.id;
       }
       // Context binding awaited: lifecycle may have changed before persistence.
@@ -216,7 +226,8 @@ export class Workspace {
       if (current.projectId) { const project = this.#project(next, principal, current.projectId); if (project.deleted || project.archived) throw Error('Restore the project before forking'); }
       next.streams.push(fork); return fork.id;
     });
-    return this.stream(principal, selected);
+    // `text` lets the browser put the chosen message into the composer of the new chat.
+    return { ...this.stream(principal, selected), ...(fromMessage !== undefined ? { text: selectedText ?? this.#stream(this.store.read(), principal, selected).forkText ?? '' } : {}) };
   }
   async attachConversation(principal, { conversationId, title: label, projectId }) {
     if (!id(conversationId) || !this.contexts?.get) throw Error('Existing conversation and host context required');

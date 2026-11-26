@@ -191,6 +191,49 @@ test('fork snapshots history independently, persists context, and never replays 
   } finally { await restored.stop(); }
 });
 
+test('fork from a chosen message keeps only what came before, returns its text, and a retry is the same fork', async t => {
+  const { service, home } = await setup(t);
+  const received = []; await service.channel.start(async input => received.push(input));
+  const source = await service.createStream('operator', { title: 'Original' });
+  const first = { id: randomUUID(), text: 'Remember violet' }, second = { id: randomUUID(), text: 'Now remember orange' };
+  await service.submit('operator', source.id, first); await service.submit('operator', source.id, second);
+  const before = JSON.stringify(service.stream('operator', source.id).messages);
+  assert.equal(service.stream('operator', source.id).messages.length, 2);
+  const key = randomUUID();
+  const fork = await service.forkStream('operator', source.id, { idempotencyKey: key, entryId: second.id });
+  assert.equal(fork.text, 'Now remember orange', 'the chosen message text comes back');
+  assert.deepEqual(fork.messages.map(message => message.text), ['Remember violet'], 'only the messages before it');
+  assert.equal(JSON.stringify(service.stream('operator', source.id).messages), before, 'the original chat is unchanged');
+  assert.equal(received.length, 2, 'a fork delivers no historical work');
+  assert.equal(service.stream('operator', source.id).messages.length, 2);
+  const retry = await service.forkStream('operator', source.id, { idempotencyKey: key, entryId: second.id });
+  assert.equal(retry.id, fork.id); assert.equal(retry.text, 'Now remember orange', 'a retry returns the text again');
+  await assert.rejects(service.forkStream('operator', source.id, { idempotencyKey: key, entryId: first.id }), /conflict/, 'same identity, other message');
+  await assert.rejects(service.forkStream('operator', source.id, { idempotencyKey: key }), /conflict/, 'same identity without a message');
+  // Two forks with one identity but different messages started at the same time: exactly one wins, the other is refused.
+  const raceKey = randomUUID();
+  const race = await Promise.allSettled([service.forkStream('operator', source.id, { idempotencyKey: raceKey, entryId: first.id }), service.forkStream('operator', source.id, { idempotencyKey: raceKey, entryId: second.id })]);
+  assert.deepEqual(race.map(result => result.status).sort(), ['fulfilled', 'rejected'], 'one identity can only ever mean one message');
+  assert.equal(service.snapshot('operator').streams.filter(stream => stream.forkKey === raceKey).length, 1, 'only one fork was stored');
+  await assert.rejects(service.forkStream('operator', source.id, { idempotencyKey: randomUUID(), entryId: 'nope' }), /not part of this chat/);
+  await assert.rejects(service.forkStream('operator', source.id, { idempotencyKey: randomUUID(), entryId: 42 }), /Invalid message/);
+  await assert.rejects(service.forkStream('operator', source.id, { idempotencyKey: randomUUID(), entryId: '' }), /Invalid message/);
+  await service.channel.send({ target: source.id }, 'An answer from the agent');
+  const assistant = service.stream('operator', source.id).messages.find(message => message.role === 'assistant');
+  assert.ok(assistant, 'the agent answered');
+  await assert.rejects(service.forkStream('operator', source.id, { idempotencyKey: randomUUID(), entryId: assistant.id }), /own messages/);
+  assert.equal(service.snapshot('operator').streams.length, 3, 'refused forks created nothing (one fork from the race plus the first)');
+  assert.equal(service.stream('operator', source.id).messages.length, 3, 'the original still holds all three messages');
+  assert.equal(JSON.stringify(service.snapshot('operator')).includes('Now remember orange'), false, 'the text is returned by the fork call only, never listed');
+  assert.equal('forkText' in service.stream('operator', fork.id), false);
+  await service.submit('operator', fork.id, { id: randomUUID(), text: 'Orange instead' });
+  assert.match(received.at(-1).turn.instructions, /Remember violet/);
+  assert.doesNotMatch(received.at(-1).turn.instructions, /Now remember orange/, 'the model of the fork never saw the cut-off message');
+  const restored = new Workspace({ home, cwd: home, executionContexts: { async bind() {} } });
+  await restored.open();
+  try { assert.equal((await restored.forkStream('operator', source.id, { idempotencyKey: key, entryId: second.id })).text, 'Now remember orange', 'the retry survives a restart'); } finally { await restored.stop(); }
+});
+
 test('the bundled openui guide is intact and carries its checksum', async () => {
   const { OPENUI_GUIDE, OPENUI_GUIDE_SHA256 } = await import('../openui-guide.mjs');
   const { createHash } = await import('node:crypto');
