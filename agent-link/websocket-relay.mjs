@@ -4,6 +4,7 @@ import path from 'node:path';
 import { Store } from '../shared/store.mjs';
 import { canonicalOrigin } from './transport.mjs';
 import { CAPABILITIES } from './workspace-protocol.mjs';
+import { enrollmentPrompt, INVITATION_LIFETIME_MS } from './enroll-prompt.mjs';
 import { WebSocketServer } from './vendor/websocket.mjs';
 const digest = value => createHash('sha256').update(value).digest('hex');
 const secret = () => randomBytes(32).toString('base64url');
@@ -19,7 +20,9 @@ export class AgentRelay {
   #emit(owner, event) { for (const entry of this.#listeners) if (entry.owner === owner) { try { entry.listener(event); } catch { /* Isolated consumer. */ } } }
   #changed(owner) { const revision = randomUUID(); this.#revisions.set(owner, revision); for (const entry of this.#listeners) if (entry.owner === owner) entry.listener({ type: 'changed', revision }); }
   #server; #wss; #timer; #closing = false; #sessions = new Map(); #pending = new Map(); #work = new Set(); #sockets = new Set(); #rates = new Map(); #accepting = new Set(); #stop;
-  constructor({ home, origin, host, port, tls, foregroundWork = work => work(), requestTimeoutMs = 15000, heartbeatMs = 20000 }) {
+  constructor({ home, origin, host, port, tls, foregroundWork = work => work(), requestTimeoutMs = 15000, heartbeatMs = 20000, invitationLifetimeMs = INVITATION_LIFETIME_MS }) {
+    if (!Number.isSafeInteger(invitationLifetimeMs) || invitationLifetimeMs < 1000 || invitationLifetimeMs > 86400000) throw Error('Invalid invitation lifetime');
+    this.invitationLifetimeMs = invitationLifetimeMs;
     this.origin = canonicalOrigin(origin); this.host = host; this.port = port; this.tls = tls; this.foregroundWork = foregroundWork;
     port ??= Number(new URL(this.origin).port || 443); this.port = port;
     if (!Number.isInteger(port) || port < 1 || port > 65535 || !Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 100 || requestTimeoutMs > 60000 || !Number.isSafeInteger(heartbeatMs) || heartbeatMs < 50) throw Error('Invalid relay listener/limits');
@@ -34,9 +37,9 @@ export class AgentRelay {
   }
   invite(owner, { name, capabilities = CAPABILITIES, color } = {}) { return this.#owned(async () => {
     if (typeof owner !== 'string' || !owner || typeof name !== 'string' || !name.trim() || name.length > 160 || !scope(capabilities) || color !== undefined && !/^#[a-f0-9]{6}$/i.test(color)) throw Error('Invalid outbound invitation');
-    const code = secret(), expiresAt = Date.now() + 300000;
+    const code = secret(), expiresAt = Date.now() + this.invitationLifetimeMs;
     await this.store.change(data => { data.invitations = data.invitations.filter(value => value.expiresAt > Date.now()); if (data.invitations.length >= 64) throw Error('Too many pending invitations'); data.invitations.push({ owner, name: name.trim(), color, capabilities: [...new Set(capabilities)], digest: digest(code), expiresAt }); });
-    return { code, expiresAt, endpoint: this.origin, transport: 'hayate-wss' };
+    return { code, expiresAt, endpoint: this.origin, transport: 'hayate-wss', prompt: enrollmentPrompt({ name: name.trim(), endpoint: this.origin, code, expiresAt }) };
   }); }
   list(owner) {
     if (typeof owner !== 'string' || !owner) throw refused();

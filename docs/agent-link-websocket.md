@@ -108,8 +108,11 @@ so the dashboard has one code path for both:
 ## Manual enrollment and approval
 
 1. Centrally: **Agents → Invite outbound agent**. Choose a name and get a masked,
-   single-use invitation, valid for five minutes.
-2. On the target: **Agents → Connect this agent outbound**, or as administrator:
+   single-use invitation, valid for one hour. The dialog offers **Copy prompt**: a
+   complete instruction for the target agent with the dashboard URL and the code
+   already inside. Paste it into the target agent; it enables missing components,
+   calls the `plugin_agent_link_connect` tool and reports back.
+2. On the target: paste the prompt into the agent, or use **Agents → Connect this agent outbound**, or as administrator:
    `/agent-link-outbound enroll https://dashboard.example.org <invitation-code>`.
 3. Centrally: refresh incoming connections, inspect identity and permissions, then
    choose **Approve and register**. Merely opening a socket does not register an
