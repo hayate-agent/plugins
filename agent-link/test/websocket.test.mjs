@@ -8,6 +8,8 @@ import { AgentRelay } from '../websocket-relay.mjs';
 import { OutboundAgentLink } from '../websocket-client.mjs';
 import { CAPABILITIES } from '../workspace-protocol.mjs';
 import { WebSocket } from '../vendor/websocket.mjs';
+import outboundPlugin, { connectTool } from '../outbound.mjs';
+import { writeFile } from 'node:fs/promises';
 
 async function wait(fn, timeout = 5000) { const until = Date.now() + timeout; while (!fn()) { if (Date.now() > until) throw Error('Condition did not become true'); await new Promise(resolve => setTimeout(resolve, 15)); } }
 async function fixture(t, options = {}, clientOptions = {}) {
@@ -237,4 +239,51 @@ test('event streaming needs the messages capability on both the grant and the ta
     assert.equal(subscriptions, 0, `${mode}: a connection without messages never subscribes to workspace events`);
     assert.ok(connection.capabilities.length > 0);
   }
+});
+
+test('the invitation comes with a complete prompt, lives one hour, and the agent tool really enrolls', async t => {
+  const f = await fixture(t);
+  const before = Date.now();
+  const invite = await f.relay.invite('operator', { name: 'Minerva' });
+  assert.ok(invite.expiresAt - before >= 3600000 - 1000 && invite.expiresAt - before <= 3600000 + 5000, 'one hour, not five minutes');
+  assert.ok(invite.prompt.includes(invite.code), 'the code is inside the prompt');
+  assert.ok(invite.prompt.includes(f.origin), 'the dashboard URL is inside the prompt');
+  assert.ok(invite.prompt.includes('"Minerva"'), 'the agent name is inside the prompt');
+  assert.match(invite.prompt, /plugin_agent_link_connect/, 'it names a real tool, not a slash command');
+  assert.match(invite.prompt, /agent-link\/outbound\.mjs/, 'it says which components to enable');
+  assert.doesNotMatch(invite.prompt, /\/agent-link-outbound enroll/, 'no command the agent cannot run');
+  assert.doesNotMatch(await readFile(path.join(f.centralHome, 'agent-link-relay/state.json'), 'utf8'), new RegExp(invite.code), 'the relay still stores only a hash');
+  const tool = connectTool(f.client);
+  assert.match(tool.name, /^plugin_[a-z][a-z0-9_]*$/, 'valid host tool name');
+  assert.equal(tool.parameters.type, 'object');
+  await assert.rejects(tool.execute({ action: 'enroll', endpoint: f.origin }, {}), /needs endpoint and code/);
+  await assert.rejects(tool.execute({ action: 'nope' }, {}), /action enroll or status/);
+  assert.equal(JSON.parse(await tool.execute({ action: 'status' }, {})).connected, false);
+  await assert.rejects(tool.execute({ action: 'enroll', endpoint: f.origin, code: '   ' }, {}), /needs endpoint and code/, 'a blank code never reaches the relay');
+  const status = JSON.parse(await tool.execute({ action: 'enroll', endpoint: f.origin, code: ` ${invite.code}\n` }, {}));
+  assert.ok(status.id, 'enrolled through the tool');
+  await wait(() => f.client.status().connected && f.relay.list('operator')[0]?.connected);
+  assert.equal(JSON.parse(await tool.execute({ action: 'status' }, {})).connected, true);
+  await assert.rejects(tool.execute({ action: 'enroll', endpoint: f.origin, code: invite.code }, {}), /already configured|refused/, 'the code is single use');
+});
+
+test('an invitation expires after its lifetime and the lifetime is bounded', async t => {
+  const f = await fixture(t, { invitationLifetimeMs: 1000 });
+  const invite = await f.relay.invite('operator', { name: 'Short' });
+  assert.ok(invite.expiresAt - Date.now() <= 1000);
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  await assert.rejects(f.client.enroll(f.origin, invite.code), /refused|failed|Invalid/);
+  assert.throws(() => new AgentRelay({ home: f.centralHome, origin: f.origin, host: '127.0.0.1', port: 1, invitationLifetimeMs: 999 }), /Invalid invitation lifetime/);
+  assert.throws(() => new AgentRelay({ home: f.centralHome, origin: f.origin, host: '127.0.0.1', port: 1, invitationLifetimeMs: 86400001 }), /Invalid invitation lifetime/);
+});
+
+test('loading the outbound plugin registers the connect tool next to the command', async t => {
+  const f = await fixture(t);
+  await writeFile(path.join(f.targetHome, 'agent-link-outbound.json'), JSON.stringify({ relays: [{ origin: f.origin, caFile: f.config.certFile }], capabilities: CAPABILITIES, projects: {}, shareStandalone: true }));
+  const tools = [], commands = [], stops = [];
+  const services = new Map([['workspaces', { version: 1, implementation: f.workspace }], ['credentials', { version: 1, implementation: f.targetVault }]]);
+  await outboundPlugin.activate({ foregroundWork: work => work(), services: { get: name => services.get(name) }, home: path.join(f.targetHome, '.'), agent: 'Minerva', onStop: fn => stops.push(fn), registerService() {}, registerChannel() {}, registerCommand: c => commands.push(c.name), registerTool: x => tools.push(x.name) });
+  t.after(async () => { for (const stop of stops) await stop(); });
+  assert.deepEqual(tools, ['plugin_agent_link_connect'], 'the agent has a real tool for it');
+  assert.deepEqual(commands, ['agent-link-outbound']);
 });

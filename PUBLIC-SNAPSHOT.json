@@ -1,6 +1,6 @@
 {
-  "contentDigest": "ea4a60fcee476f1deb1315fac82ef8bc580b38b2dcb63cca3349ac6473c8ba48",
-  "coreSHA": "f98ef8e41ee96bdb41991169825f7b1d5798a18f",
+  "contentDigest": "5a8d5f96fd35d038b31000e4b1b055142c2ee0efe5c2e1d44078865dd427e751",
+  "coreSHA": "67895a1e46328bea74264363505860e0486e4cc2",
   "files": [
     {
       "mode": "100644",
@@ -84,13 +84,18 @@
     },
     {
       "mode": "100644",
+      "path": "agent-link/enroll-prompt.mjs",
+      "sha256": "02694c8a5c9d7ae3ac6049cef5e0057dca467c9c2775eb2b6c37209f96993839"
+    },
+    {
+      "mode": "100644",
       "path": "agent-link/index.mjs",
       "sha256": "dd59d0d2dc18a6df9d3568c958a363a71d90ba514824ef9ad0debcbb5662dccc"
     },
     {
       "mode": "100644",
       "path": "agent-link/outbound.mjs",
-      "sha256": "b3c46d08601b3cac2ad7bb0183bc6942a2deb24ab51b4e4c5b3f209baef26402"
+      "sha256": "a0cb57a8822acefa0b05193e78b098f9382f4bcb0382469afbc64fc70d8dad9a"
     },
     {
       "mode": "100644",
@@ -135,7 +140,7 @@
     {
       "mode": "100644",
       "path": "agent-link/test/websocket.test.mjs",
-      "sha256": "942a2f8d15eee7466f8f934372e5944c8e11c964a743abf6791970e812471ae2"
+      "sha256": "05e90038e1805ef1e136771c9a8f359ee1199c82789c054b78cedf76356f54ac"
     },
     {
       "mode": "100644",
@@ -150,7 +155,7 @@
     {
       "mode": "100644",
       "path": "agent-link/websocket-relay.mjs",
-      "sha256": "fd539ce7e1f7ec4e9896921be3836e2af7ea8e6500c3da4ca3ac946dc186405a"
+      "sha256": "91fd4fcae64824a0d5f2debc250cc623b0992b0e8dd728dbe19aed19027173d0"
     },
     {
       "mode": "100644",
@@ -355,7 +360,7 @@
     {
       "mode": "100644",
       "path": "docs/agent-link-websocket.md",
-      "sha256": "7fc8c4a51eeffb99c50741caca1f244c1e7aa861dfc9999fd49bd90255028ab0"
+      "sha256": "00b2822ca9c576bf5188e680db190edd41fe7c0af5e563f0094afaf92f09933c"
     },
     {
       "mode": "100644",
@@ -1290,5 +1295,5 @@
   ],
   "historyPolicy": "fresh snapshot; no private source ancestry or author metadata",
   "schema": 1,
-  "sourceSHA": "f47c5fd6b4a5e2f3f98794518ae372515e4ef5fa"
+  "sourceSHA": "69a860ab414de6112da02647017c60fab57de755"
 }
